@@ -27,6 +27,7 @@ from .language import (
     fuse_hyper_connection_projections,
     get_ple_runtime_mode,
     mtp_runtime,
+    prepare_rmsnorm_scales,
 )
 logger = logging.getLogger(__name__)
 
@@ -279,6 +280,7 @@ class Model(nn.Module):
         mtp_enabled = self.mtp_runtime.enabled
         hybrid = 0 if mtp_enabled else fuse_hyper_connection_projections(self)
         compiled = compile_hyper_connections(self, mtp_enabled)
+        prepare_rmsnorm_scales(self)
         if mtp_enabled:
             logger.info(
                 "Skipped Qwen4-Exp exact hybrid projections while "

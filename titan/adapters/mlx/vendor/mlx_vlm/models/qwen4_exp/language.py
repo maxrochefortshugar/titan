@@ -11,6 +11,7 @@ import weakref
 from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
@@ -30,6 +31,7 @@ from ..qwen3_5.language import (
     _target_verify_linears,
 )
 from ..qwen3_5_moe.language import Qwen3_5MoeSparseMoeBlock
+from .. import forward_paths
 from .config import ModelConfig, TextConfig
 from .qsa_fast import (
     contiguous_causal_gathered_qsa,
@@ -994,13 +996,12 @@ class QSAQuantizedKVCache(_QSAIndexerCache, QuantizedKVCache):
 
 # Dispatch each decoder layer's graph to the GPU as soon as it is built (decode and
 # verify rows only) so the GPU executes layer i while the host builds layer i+1.
-# Scheduling only: outputs are bit-identical. Disable with TITAN_QWEN4_EAGER_DISPATCH=0.
-_EAGER_DISPATCH = os.environ.get("TITAN_QWEN4_EAGER_DISPATCH", "1").strip().lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
+# Scheduling only: outputs are bit-identical.
+#
+# Titan modification: this was the TITAN_QWEN4_EAGER_DISPATCH environment
+# variable, read once at import. It is now the "eager_dispatch" forward path,
+# so a bench can pair both settings inside one process and the resolved
+# configuration can record which one ran. See ``models/forward_paths.py``.
 _EAGER_DISPATCH_MAX_ROWS = 64
 # Lightning MTP verify rows through the gathered QSA arm (TITAN_QWEN4_QSA_GATHERED_VERIFY=0 disables).
 _GATHERED_VERIFY_DISABLED = os.environ.get(
@@ -1019,16 +1020,44 @@ class Qwen4ExpRMSNorm(nn.Module):
             raise ValueError(f"{dim=} must be divisible by {group_size=}")
         self.weight = mx.zeros(dim)
 
+    def prepare_scale(self) -> None:
+        """Fold ``1 + weight`` once, at load time.
+
+        Titan modification: the cast, the add and the grouped reshape below
+        are three graph nodes per norm per step over a constant, and there are
+        two of these norms in every decoder layer plus one per PLE layer and
+        one at the head. Precomputing them is bit-identical -- the same fp32
+        value, computed once -- and it takes about 350 nodes out of a 48-layer
+        decode step. ``prepare_rmsnorm_scales`` calls this after the weights
+        land; a module whose weights change afterwards must be prepared again.
+        """
+        scale = 1.0 + self.weight.astype(mx.float32)
+        if self.group_size is not None:
+            scale = scale.reshape(-1, self.group_size)
+        mx.eval(scale)
+        self._titan_scale = (id(self.weight), scale)
+
+    def _scale(self) -> mx.array:
+        cached = getattr(self, "_titan_scale", None)
+        if (
+            cached is not None
+            and cached[0] == id(self.weight)
+            and forward_paths.enabled("cached_norm_scale")
+        ):
+            return cached[1]
+        scale = 1.0 + self.weight.astype(mx.float32)
+        return scale if self.group_size is None else scale.reshape(-1, self.group_size)
+
     def __call__(self, x: mx.array) -> mx.array:
         dtype = x.dtype
-        scale = 1.0 + self.weight.astype(mx.float32)
+        scale = self._scale()
         if self.group_size is None:
             return mx.fast.rms_norm(x, scale, self.eps).astype(dtype)
         # rms_norm takes a 1-D weight, so a grouped norm cannot hand it the
         # per-group scale; normalise over the group axis and scale afterwards.
         # The scale stays fp32 -- rounding (1 + w) to bf16 costs half a ULP.
         y = x.astype(mx.float32).reshape(*x.shape[:-1], -1, self.group_size)
-        y = mx.fast.rms_norm(y, None, self.eps) * scale.reshape(-1, self.group_size)
+        y = mx.fast.rms_norm(y, None, self.eps) * scale
         return y.reshape(x.shape).astype(dtype)
 
 
@@ -1657,6 +1686,7 @@ class Qwen4ExpGatedResidual(nn.Module):
         compiled_forward = getattr(self, "_compiled_forward", None)
         if (
             compiled_forward is not None
+            and forward_paths.enabled("compiled_gated_residual")
             and not target_verify
             and hyper_input.ndim == 3
             and hyper_input.shape[:2] == (1, 1)
@@ -1838,6 +1868,16 @@ def fuse_hyper_connection_projections(model: nn.Module) -> int:
     for module in targets:
         module._titan_exact_hybrid_projection = True
     return len(targets)
+
+
+def prepare_rmsnorm_scales(model: nn.Module) -> int:
+    """Precompute ``1 + weight`` on every Qwen4 RMSNorm. Call after loading."""
+    prepared = 0
+    for _path, module in model.named_modules():
+        if isinstance(module, Qwen4ExpRMSNorm):
+            module.prepare_scale()
+            prepared += 1
+    return prepared
 
 
 def compile_hyper_connections(model: nn.Module, mtp_enabled: bool = False) -> int:
@@ -2642,6 +2682,30 @@ class Qwen4ExpPLELayer(nn.Module):
         return gated_values + conv_output
 
 
+@partial(mx.compile, shapeless=True)
+def _hyper_inject(
+    hyper_input: mx.array, branch: mx.array, injection_weights: mx.array
+) -> mx.array:
+    """Write a branch's output back into the 4-wide residual stream.
+
+    Titan modification: this was five ops inline in the decoder layer, run
+    twice per layer, so 480 of a 48-layer decode step's graph nodes were this
+    arithmetic. It is elementwise apart from the reshape, which makes it
+    exactly what ``mx.compile`` is for, and ``shapeless=True`` keeps one
+    compiled graph across decode width 1 and every verify width.
+    """
+    injection = branch[..., None, :] * injection_weights[..., None]
+    return hyper_input + mx.flatten(injection, -2, -1)
+
+
+def _hyper_inject_ops(
+    hyper_input: mx.array, branch: mx.array, injection_weights: mx.array
+) -> mx.array:
+    """The uncompiled arm of :func:`_hyper_inject`, op for op the stock code."""
+    injection = branch[..., None, :] * injection_weights[..., None]
+    return hyper_input + injection.reshape(*hyper_input.shape)
+
+
 class Qwen4ExpDecoderLayer(nn.Module):
     def __init__(self, config: TextConfig, layer_idx: int):
         super().__init__()
@@ -2700,16 +2764,19 @@ class Qwen4ExpDecoderLayer(nn.Module):
                 position_ids=position_ids,
                 target_verify=target_verify,
             )
-        injection = branch[..., None, :] * injection_weights[..., None]
-        hidden_states = hyper_input + injection.reshape(*hyper_input.shape)
+        inject = (
+            _hyper_inject
+            if forward_paths.enabled("compiled_gated_residual")
+            else _hyper_inject_ops
+        )
+        hidden_states = inject(hyper_input, branch, injection_weights)
 
         mixed, hyper_input, injection_weights = self.mlp_hyper_connection(
             hidden_states,
             target_verify=target_verify,
         )
         branch = self.mlp(mixed, target_verify=target_verify)
-        injection = branch[..., None, :] * injection_weights[..., None]
-        return hyper_input + injection.reshape(*hyper_input.shape)
+        return inject(hyper_input, branch, injection_weights)
 
 
 class Qwen4ExpModel(nn.Module):
@@ -2767,9 +2834,9 @@ class Qwen4ExpModel(nn.Module):
                 target_verify=gdn_sink is not None,
             )
             if (
-                _EAGER_DISPATCH
-                and hidden_states.shape[0] * hidden_states.shape[1]
+                hidden_states.shape[0] * hidden_states.shape[1]
                 <= _EAGER_DISPATCH_MAX_ROWS
+                and forward_paths.enabled("eager_dispatch")
             ):
                 mx.async_eval(hidden_states)
             if hidden_sink is not None and index in capture:

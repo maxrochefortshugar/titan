@@ -11,6 +11,7 @@ from ..base import (
     scaled_dot_product_attention,
 )
 from ..cache import ArraysCache, KVCache
+from .. import forward_paths
 from ..rope_utils import MRoPERotaryEmbedding
 from ..rope_utils import apply_multimodal_rotary_pos_emb as _apply_mrope
 from .config import ModelConfig, TextConfig
@@ -152,12 +153,33 @@ _TARGET_VERIFY_GEMV = (
 )
 
 
+# The per-row verify arms below trade weight reuse for row independence: each
+# output row reads the whole weight matrix. That is the right trade for a
+# verify block a few rows wide and a catastrophic one for a prefill chunk,
+# where it is the difference between one GEMM and 150 GEMVs over the same
+# weights. Anything wider than this many rows takes the ordinary batched call.
+#
+# Titan modification. The ceiling is new; before it, a prefill chunk that asked
+# for hidden states took the per-row arms and a 150-token chunk measured 200
+# seconds against 0.1 without. ``model.py``'s ``prefill`` docstring recorded
+# that as a trap the caller had to avoid; it is now a shape the model handles.
+_TARGET_VERIFY_MAX_ROWS = 64
+
+
+def _narrow_verify_block(x: mx.array) -> bool:
+    """Is *x* a verify block, rather than a single row or a prefill chunk?"""
+    return (
+        x.ndim == 3
+        and x.shape[1] > 1
+        and x.shape[0] * x.shape[1] <= _TARGET_VERIFY_MAX_ROWS
+    )
+
+
 def _use_target_verify_dense(linear, x: mx.array, target_verify: bool) -> bool:
     return (
         _TARGET_VERIFY_GEMV is not None
         and target_verify
-        and x.ndim == 3
-        and x.shape[1] > 1
+        and _narrow_verify_block(x)
         and isinstance(linear, (nn.Linear, nn.QuantizedLinear))
     )
 
@@ -605,10 +627,12 @@ def _target_verify_quantized_argmax(linear, x: mx.array) -> Optional[mx.array]:
 
 
 def _target_verify_timewise(fn, x: mx.array) -> mx.array:
+    """One call per token. The ``batched_verify_linear`` path replaces this."""
     return mx.concatenate([fn(x[:, i : i + 1]) for i in range(x.shape[1])], axis=1)
 
 
 def _target_verify_singletons(fn, x: mx.array) -> mx.array:
+    """One call per row per token. The ``batched_verify_linear`` path replaces this."""
     rows = []
     for row in range(x.shape[0]):
         rows.append(
@@ -630,6 +654,8 @@ def _target_verify_linear(linear, x: mx.array, target_verify: bool) -> mx.array:
         out = _target_verify_quantized_linear(linear, x)
         if out is not None:
             return out
+        if forward_paths.enabled("batched_verify_linear"):
+            return linear(x)
         return _target_verify_timewise(linear, x)
 
     if isinstance(linear, nn.Linear) and "bias" not in linear:
@@ -637,14 +663,23 @@ def _target_verify_linear(linear, x: mx.array, target_verify: bool) -> mx.array:
         if out is not None:
             return out
 
+    # Titan modification: the per-row arms below are what the block-wide call
+    # replaces. The dense GEMV declines a projection whose output is narrower
+    # than four columns or whose input is more than sixteen times its output
+    # (the MoE router, the hyper-connection block injection, the GDN beta and
+    # alpha heads), and the stock fallback was one launch per row per token.
+    # One batched call over the same rows is the same arithmetic per row: each
+    # output element is still a dot product of one input row with one weight
+    # row, and the parity test holds it to a bf16 ULP.
+    if forward_paths.enabled("batched_verify_linear"):
+        return linear(x)
     return _target_verify_singletons(linear, x)
 
 
 def _target_verify_linears(linears, x: mx.array, target_verify: bool):
     if not (
         target_verify
-        and x.ndim == 3
-        and x.shape[1] > 1
+        and _narrow_verify_block(x)
         and all(
             isinstance(linear, (nn.Linear, nn.QuantizedLinear)) for linear in linears
         )
@@ -658,13 +693,15 @@ def _target_verify_linears(linears, x: mx.array, target_verify: bool):
 
 
 def _target_verify_embedding_as_linear(embedding, x: mx.array, target_verify: bool):
-    if not (target_verify and x.ndim == 3 and x.shape[1] > 1):
+    if not (target_verify and _narrow_verify_block(x)):
         return embedding.as_linear(x)
 
     out = _target_verify_weight(embedding.weight, x)
     if out is not None:
         return out
 
+    if forward_paths.enabled("batched_verify_linear"):
+        return embedding.as_linear(x)
     return _target_verify_timewise(embedding.as_linear, x)
 
 
@@ -1486,7 +1523,40 @@ class Qwen3_5Attention(nn.Module):
         else:
             output = None
 
-        if output is None and target_verify and L > 1:
+        if (
+            output is None
+            and target_verify
+            and L > 1
+            and forward_paths.enabled("batched_verify_attention")
+        ):
+            # Titan modification: one attention call over the whole block.
+            #
+            # The loop below computes row i against the first prefix_len + i + 1
+            # keys, which is causality expressed by slicing rather than by a
+            # mask. One call with the block's own mask is the same reduction
+            # over the same keys: the columns the loop leaves out are the
+            # columns the mask turns off, and a masked-off column contributes
+            # an exact zero to the softmax sum. The two arms agree to a bf16
+            # ULP on the synthetic model (tests/model/test_forward_overhead.py).
+            #
+            # The mask handling reproduces the loop's exactly, including the
+            # part that looks like an oversight: a mask of rank below four was
+            # dropped by the loop, so it is dropped here too and causality
+            # comes from the string form. Changing that is a numerics change
+            # and does not belong in a dispatch fix.
+            output = scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                cache=cache,
+                scale=self.scale,
+                mask=(
+                    mask
+                    if isinstance(mask, mx.array) and mask.ndim >= 4
+                    else "causal"
+                ),
+            )
+        elif output is None and target_verify and L > 1:
             prefix_len = keys.shape[-2] - L
             output = mx.concatenate(
                 [
@@ -2552,7 +2622,20 @@ class LanguageModel(nn.Module):
         hidden_sink: Optional[List[mx.array]] = (
             [] if capture_layer_ids is not None else None
         )
-        gdn_sink: Optional[list] = [] if capture_layer_ids is not None else None
+        # Titan modification: the recurrent capture is a verify-block facility,
+        # not a consequence of wanting a hidden state. Capturing it costs one
+        # intermediate state per recurrent layer per row, and asking for it
+        # over a whole prefill chunk both allocated that and put every linear
+        # and every attention row on the per-row arms. A caller that wants the
+        # hidden state from a prefill now gets it at prefill cost; a caller
+        # that wants a replay-free rollback still has to verify a block
+        # narrow enough to roll back, which is every width the engine uses.
+        block = inputs_embeds if inputs is None else inputs
+        capture_recurrent = (
+            capture_layer_ids is not None
+            and block.shape[0] * block.shape[1] <= _TARGET_VERIFY_MAX_ROWS
+        )
+        gdn_sink: Optional[list] = [] if capture_recurrent else None
         target_verify = gdn_sink is not None
 
         out = self.model(
