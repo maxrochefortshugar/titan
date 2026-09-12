@@ -16,6 +16,8 @@ __all__ = [
     "StateError",
     "SnapshotError",
     "BackendError",
+    "EngineError",
+    "EngineUnhealthyError",
     "KernelError",
     "TemplateError",
     "TokenizerError",
@@ -58,6 +60,26 @@ class SnapshotError(TitanError):
 
 class BackendError(TitanError):
     """The model backend failed. The sequence dies, the process does not."""
+
+
+class EngineError(TitanError):
+    """The loop failed a request for a reason that is not the request's fault.
+
+    Every call the loop thread makes into a port is wrapped, and anything that
+    comes back out of one that is not a :class:`TitanError` is reported as this:
+    the request dies with an error finish, the loop keeps running, and the
+    message names the port call that failed. A bare exception escaping the loop
+    thread is the failure mode this class exists to prevent.
+    """
+
+
+class EngineUnhealthyError(EngineError):
+    """The engine is not serving. New work is refused rather than queued.
+
+    Set when the backend itself looks dead (a warm-up probe that failed twice
+    in a row, or a device error) or when the watchdog caught a loop step over
+    its budget. ``GET /health`` reports it and admissions answer 503.
+    """
 
 
 class KernelError(TitanError):

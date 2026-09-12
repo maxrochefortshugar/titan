@@ -30,11 +30,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from typing import Any, AsyncIterator, Protocol, Union
 
-from titan.core.types import Request, StreamEnd, TokenEvent
+from titan.core.errors import EngineError, EngineUnhealthyError
+from titan.core.types import FinishReason, Request, StreamEnd, TokenEvent
 
-from titan.engine.scheduler import EngineLoop
+from titan.engine.scheduler import EngineHealth, EngineLoop
 
 __all__ = ["TitanEngine", "LoopRunner", "ThreadRunner", "InlineRunner", "EngineEvent"]
 
@@ -47,6 +49,15 @@ class LoopRunner(Protocol):
     def start(self) -> None: ...
 
     def stop(self, drain_timeout_s: float) -> None: ...
+
+    def alive(self) -> bool:
+        """Whether the loop is still turning.
+
+        The bridge asks periodically while a request is outstanding. A runner
+        that does not implement it is assumed alive, which is the old
+        behaviour; a runner that answers False releases every waiter with an
+        error rather than leaving them on a queue nobody feeds.
+        """
 
 
 class ThreadRunner:
@@ -69,12 +80,31 @@ class ThreadRunner:
             target=self.loop.run_forever, name=self.name, daemon=True
         )
         self._thread.start()
+        # Wait for the loop to claim the thread before returning. A ``stop``
+        # that arrives in the window before it does would see an unowned loop
+        # and drain it from the caller's thread, which is two threads in one
+        # turn. Bounded, because a loop that cannot reach its own first line
+        # is a problem the caller cannot fix by waiting longer.
+        self.loop.wait_until_running(1.0)
+
+    def alive(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
 
     def stop(self, drain_timeout_s: float = 5.0) -> None:
+        """Stop within ``drain_timeout_s``, wedged loop step or not.
+
+        One budget, split between the drain and the join, rather than one each:
+        a caller that asked for five seconds meant five, and a loop stuck
+        inside a port call would otherwise take ten. The thread is a daemon, so
+        a join that times out leaves nothing behind that can hold the process
+        open.
+        """
         thread, self._thread = self._thread, None
+        deadline = time.monotonic() + max(0.0, drain_timeout_s)
         self.loop.shutdown(drain_timeout_s)
         if thread is not None:
-            thread.join(timeout=drain_timeout_s)
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 class InlineRunner:
@@ -95,13 +125,33 @@ class InlineRunner:
         if self._task is None:
             self._task = asyncio.get_running_loop().create_task(self._run())
 
+    def alive(self) -> bool:
+        task = self._task
+        return task is not None and not task.done()
+
     async def _run(self) -> None:
         while not self._stop:
-            worked = self.loop.step()
+            try:
+                worked = self.loop.step()
+            except Exception as exc:  # noqa: BLE001 - same contract as the thread
+                # The inline runner is the production loop driven by hand, so
+                # it survives a fault the same way: the engine is marked
+                # unhealthy, the sequences it held are failed, and the driver
+                # keeps stepping.
+                worked = self.loop.on_step_error(exc)
             await asyncio.sleep(0 if worked else self.idle_sleep)
 
     def stop(self, drain_timeout_s: float = 5.0) -> None:
+        """Shut the loop down, then drop the driving task.
+
+        The shutdown comes first and it is the same call the thread runner
+        makes: every live sequence is answered and every queued one is told the
+        engine is going away. Cancelling the task without it would leave the
+        loop holding sequences that nobody will ever step again, which is the
+        same hang as a dead thread wearing a tidier name.
+        """
         self._stop = True
+        self.loop.shutdown(drain_timeout_s)
         if self._task is not None:
             self._task.cancel()
             self._task = None
@@ -129,10 +179,12 @@ class TitanEngine:
         *,
         runner: LoopRunner | None = None,
         queue_maxsize: int = 0,
+        liveness_poll_s: float = 1.0,
     ) -> None:
         self.loop = loop
         self.runner = runner if runner is not None else ThreadRunner(loop)
         self.queue_maxsize = queue_maxsize
+        self.liveness_poll_s = max(0.001, float(liveness_poll_s))
         self._started = False
 
     # -- lifecycle ---------------------------------------------------------
@@ -145,6 +197,11 @@ class TitanEngine:
         if self._started:
             self.runner.stop(drain_timeout_s)
             self._started = False
+
+    def health(self) -> EngineHealth:
+        """Whether the engine is serving. ``GET /health`` reads this, and the
+        chat endpoint refuses with a 503 when it says no."""
+        return self.loop.health()
 
     # -- the port ----------------------------------------------------------
     async def generate(self, request: Request) -> AsyncIterator[EngineEvent]:
@@ -165,9 +222,22 @@ class TitanEngine:
 
         finished = False
         try:
-            self.loop.submit(request, sink)
+            try:
+                # Checked here as well as at the HTTP layer, because the engine
+                # can fall over in the gap between the two. Before the first
+                # yield, so it is a status code rather than an error frame.
+                health = self.loop.health()
+                if health is not None and not health.healthy:
+                    raise EngineUnhealthyError(f"engine unhealthy: {health.reason}")
+                self.loop.submit(request, sink)
+            except EngineError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - nothing is on the wire yet
+                # Before the first yield, so this one is allowed to raise: the
+                # API layer still has a status code to set.
+                raise EngineError(f"could not submit to the engine loop: {exc}") from exc
             while True:
-                event = await events.get()
+                event = await self._next_event(events, request)
                 yield event
                 if isinstance(event, StreamEnd):
                     finished = True
@@ -180,6 +250,50 @@ class TitanEngine:
             # command is sent on its way past.
             if not finished:
                 self.loop.cancel(request.request_id)
+
+    async def _next_event(self, events: asyncio.Queue, request: Request) -> EngineEvent:
+        """Wait for the loop's next event, and notice if the loop is gone.
+
+        The queue is fed by one thread and nothing else, so a loop that stops
+        without emitting a ``StreamEnd`` is a client that waits forever. That
+        is the shape of the hang this whole path was written against, and it is
+        cheap enough to keep a guard for it even now that the loop survives its
+        own faults: a poll a second, per outstanding request, and a synthetic
+        error finish rather than an open connection.
+        """
+        while True:
+            try:
+                # ``asyncio.timeout`` rather than ``asyncio.wait_for``. They
+                # look interchangeable and are not: ``wait_for`` on 3.11
+                # returns the inner result when the outer task is cancelled at
+                # the moment the inner one has already completed, so a
+                # disconnect during a token delivery would be swallowed and
+                # the stream would run on with nobody reading it. The context
+                # manager converts only its own cancellation into a timeout
+                # and re-raises anybody else's, which is the behaviour this
+                # loop needs. No shield either: a cancelled ``get`` leaves its
+                # item in the queue, and shielding would hold a cancellation
+                # of the consuming task at arm's length, which is how a
+                # disconnect stops being a disconnect.
+                async with asyncio.timeout(self.liveness_poll_s):
+                    return await events.get()
+            except TimeoutError:
+                if self._runner_alive():
+                    continue
+                if not events.empty():
+                    return events.get_nowait()
+                return StreamEnd(
+                    request_id=request.request_id,
+                    finish_reason=FinishReason.ERROR,
+                    prompt_tokens=len(request.prompt_tokens),
+                    cached_tokens=0,
+                    completion_tokens=0,
+                    error="the engine loop stopped before this request finished",
+                )
+
+    def _runner_alive(self) -> bool:
+        probe = getattr(self.runner, "alive", None)
+        return True if not callable(probe) else bool(probe())
 
     # -- observability -----------------------------------------------------
     def stats(self) -> Any:

@@ -297,6 +297,13 @@ class WaitQueue:
                 return self._entries.pop(index)
         return None
 
+    def drain(self) -> list[_Waiting]:
+        """Take every waiting entry. Used on shutdown, where each one is owed
+        a terminal event: a queued request whose sink is never called is a
+        client that waits for a stream that will not start."""
+        entries, self._entries = self._entries, []
+        return entries
+
     def max_skips(self) -> int:
         return max((e.skips for e in self._entries), default=0)
 

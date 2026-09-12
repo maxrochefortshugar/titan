@@ -279,6 +279,8 @@ Refusal is asynchronous. A full queue or a guard refusal arrives as a
 thread, because the loop is the single owner of the queue and the response
 headers are already on the wire by then.
 
+What the loop does when a port call raises is section 11.
+
 `resident_gb` asks the backend when the backend offers it, and otherwise models
 it as the weights plus every live sequence's estimate. The measurement that
 matters -- `mx.get_active_memory` plus the Mach footprint -- is MLX-thread-only
@@ -357,7 +359,191 @@ deterministic next-token function and real snapshot and truncation rules, a
 | `test_admission.py` | the grid rule over a sweep of prompt and match lengths, the guard, skip-not-block, cache plan validation |
 | `test_scheduler.py` | turn ordering, chunked prefill and snapshot positions, retirement, cancellation, usage, refusals |
 | `test_engine.py` | the async surface: one StreamEnd, cached tokens, concurrent streams, disconnect frees state |
+| `test_engine_failures.py` | a port that raises outside the taxonomy: prefill, decode, tokenizer, cache store; blast radius, health, the probe, the watchdog, shutdown and cancellation mid-failure |
+
+`tests/api/test_engine_errors.py` covers the same failures from the client's
+side: the SSE error frame, the 500 body, and the 503s.
 
 `tests/kernels/test_verify_accept.py` covers k = 1 to 8, full accept, zero
 accept, rejection at every position, row independence, and the stochastic path
 against numpy.
+
+## 11. Failure handling
+
+### The bug this section is written against
+
+A fake backend's `prefill` raised `TypeError: prefill() got an unexpected
+keyword argument 'next_token'`, and the request never finished. Not slowly: at
+all. Two decode rounds lost time to it before anybody pinned it down, so the
+diagnosis is written here rather than in a commit message.
+
+`Scheduler._run_prefill` caught `TitanError` and nothing else. A `TypeError` is
+not a `TitanError`, so it left `_run_prefill`, left `step`, and left
+`run_forever`. Under the production `ThreadRunner` that is the end of the loop
+thread: Python's default thread hook prints the traceback to stderr and the
+thread exits. Under `InlineRunner` it is quieter and worse, because the
+exception lands in an asyncio task nobody awaits and nothing is printed until
+the garbage collector gets around to it.
+
+Either way the sequence is still on `_live`, still `PREFILLING`, and nothing
+will ever retire it. `TitanEngine.generate` is parked on `await events.get()`
+against a queue whose only producer was the thread that just died. The client
+holds an open connection to a process that is up, healthy-looking and never
+going to answer.
+
+So: **the hang was the exception escaping into the runner, not the loop failing
+to advance the sequence out of `PREFILLING`.** The stuck phase is a symptom of
+the dead thread, and a fix that only re-drove the phase would have left the
+next unguarded port call to do the same thing. The same hole existed at decode,
+verify, draft, cache store, tokenizer and codec, all for the same reason: the
+error taxonomy in `titan/core/errors.py` says what a fault *means*, and it had
+quietly been read as saying which faults the loop *survives*. It never said
+that.
+
+### The contract
+
+Every call the loop thread makes out of the engine goes through
+`EngineLoop._guarded(op, sequences, fn, ...)`, which returns the call's value or
+the `FAILED` sentinel. `TitanError` and a bare `RuntimeError` are treated
+identically: the taxonomy is for the message, not for the blast radius.
+
+When a guarded call raises:
+
+1. the sequences named in `sequences` finish with `FinishReason.ERROR` and an
+   error string of the form `"{op} failed: {ExceptionType}: {text}"`, so the
+   original type and message survive all the way to the client;
+2. retirement releases their state handles, their store sessions and their
+   cache leases on the ordinary path, because a failing sequence retires the
+   same way a finished one does;
+3. the failure is counted -- `engine.port_failures`, `engine.port_failures.{op}`
+   and a `port_failed` profiler event carrying the op, the exception type and
+   the sequence count;
+4. every other sequence keeps its seat and the turn carries on.
+
+A batched call fails its batch and only its batch. `cycle.run` is one guarded
+call for the whole forward, so a fault anywhere under it -- drafter, n-gram
+index, verify, sampler, detokeniser, codec -- fails the sequences that shared
+that forward. A batch of one fails one request; a batch of eight fails eight.
+That is the price of sharing a forward, and it is stated here rather than
+discovered.
+
+Two calls are deliberately outside the blast-radius rule. A cache store that
+raises costs the sequence its cache entry and not its answer, so the request
+finishes on its real reason and the failure is counted with no sequence named.
+Retirement's detokeniser flush is the same: the answer is already streamed.
+
+`run_forever` also wraps `step` itself. Nothing inside `step` is supposed to
+reach `on_step_error` -- every port call is guarded and the engine's own code is
+not allowed to raise -- but the cost of being wrong about that is a dead thread
+and a client on a queue nobody feeds, and the cost of the belt is one `try`.
+`on_step_error` marks the engine unhealthy, fails every live sequence with the
+same message, retires them and returns.
+
+### Health
+
+`EngineLoop.health()` returns an `EngineHealth`. `healthy` is False only for a
+fault the engine cannot serve through:
+
+- a **warm-up probe** that failed twice in a row. After any port failure the
+  loop calls `backend.warmup()`, the cheapest call that still touches the
+  device, and uses it as a probe. One failure is a bad moment; two with no
+  success between them is a backend that is not coming back;
+- a **device error**, which is marked on the first occurrence. MLX exports no
+  exception type to catch, so a Metal fault arrives as a `RuntimeError` with the
+  driver's text in it. `_is_device_error` matches on the exception's own module
+  (`mlx`, `metal`) and on a short marker list. The markers are narrow on
+  purpose: a false positive costs an engine that refuses work until it is
+  restarted;
+- the **watchdog** catching a step over its budget;
+- a shutdown that timed out with a step still running.
+
+A request that dies on its own bad luck leaves the engine healthy and takes only
+itself down.
+
+An unhealthy engine stops admitting. New submits are answered immediately with
+an `ERROR` `StreamEnd` naming the reason, and the first turn afterwards drains
+the wait queue the same way: a request queued a moment before the fault is owed
+the same answer as one that arrives a moment after it. Draining happens on the
+loop thread rather than inside `mark_unhealthy`, which the watchdog thread also
+calls. `mark_healthy()` clears the flag and exists for an operator, not for the
+loop.
+
+### The watchdog
+
+A step that never returns cannot report itself, so `step` records
+`_step_started` against `time.monotonic` and a second daemon thread polls
+`check_step_deadline` every `watchdog_poll_s` (default 0.5 s). Past
+`step_budget_s` (default 120 s) it fires once per step and:
+
+- captures the loop thread's stack with `sys._current_frames` and logs it. Not
+  `faulthandler.dump_traceback`: that writes every thread to a file descriptor,
+  and what is wanted is one thread as a string a log line and a test can both
+  hold. The captured stack stays on `last_stall_stack`;
+- emits `loop_stalled` with the elapsed time and the budget, counts
+  `engine.loop_stalls`, and marks the engine unhealthy.
+
+It does not kill the thread. There is no safe way to interrupt a thread inside a
+Metal call, and an engine that kills its own loop is the hang this whole section
+exists to prevent. The budget is wall-clock and reads a real clock even when the
+loop was built with an injected one: a test clock that ticks per read would make
+the budget a count of reads rather than a duration. A budget of zero disables
+the watchdog.
+
+### Shutdown
+
+`shutdown(drain_timeout_s)` is bounded by a wall clock on every path, including
+the one where a step is wedged inside a port call. When the loop owns a thread
+of its own, the caller waits for it to notice rather than stepping in parallel
+with it. If the drain window closes with the thread still inside a step, every
+live sequence gets an `ABORT` `StreamEnd` and every queued one gets the same,
+and the loop thread is left to whatever it is doing: it is a daemon, so it
+cannot hold the process open, and its state handles are not closed underneath
+it, because closing a handle under a thread still reading it trades a hang for a
+crash. `ThreadRunner.stop` spends one budget across the drain and the join
+rather than one each.
+
+`InlineRunner.stop` calls the same `shutdown` before it cancels its driving
+task. Cancelling without it would leave the loop holding sequences nobody will
+ever step again, which is the same hang wearing a tidier name.
+
+### The asyncio bridge
+
+`TitanEngine.generate` waits on the queue in `liveness_poll_s` slices (default
+1 s) and asks the runner whether it is still turning. A runner that answers
+False releases the waiter with an `ERROR` `StreamEnd` rather than leaving it on
+a queue nobody feeds. Belt and braces now that the loop survives its own faults,
+and cheap enough to keep for the faults it cannot survive.
+
+The poll is `asyncio.timeout`, not `asyncio.wait_for`. They look
+interchangeable and are not: on 3.11 `wait_for` returns the inner result when
+the outer task is cancelled at the moment the inner one has already completed,
+so a client disconnecting during a token delivery would have its cancellation
+swallowed and the stream would run on with nobody reading it. That is a second
+hang, discovered while fixing the first, and it is why
+`test_cancelling_the_consuming_task_frees_the_sequence` exists.
+
+Anything that goes wrong before the first yield is allowed to raise, because the
+API layer still has a status code to set: `EngineUnhealthyError` if the loop
+reports itself unhealthy in the gap between the readiness check and the submit
+(the API maps it to 503), `EngineError` if the submit itself fails (500). After
+the first yield there is no status code left and every failure is a `StreamEnd`.
+
+### What the client sees
+
+| failure | streaming | non-streaming |
+|---|---|---|
+| a port call raised (prefill, decode, verify, tokenizer) | the partial text, then an SSE error frame carrying `"{op} failed: {Type}: {text}"`, then a normal finish chunk and `[DONE]` | HTTP 500, OpenAI error envelope, same message |
+| the cache store raised | nothing: the turn finishes on its real reason | nothing |
+| the engine raised instead of yielding | the same error frame and a closed stream | HTTP 500 with the exception type and text |
+| the engine is unhealthy | HTTP 503 before anything is rendered | HTTP 503 |
+| already queued when the engine went unhealthy | an error frame naming the reason | HTTP 500 with the reason |
+| shutdown while in flight | an abort finish and a closed stream | HTTP 200 with whatever was generated |
+
+`GET /health` is liveness and readiness at once, because here they are the same
+question: a process that is up and cannot serve should not be sent work. It
+answers 503 with `status: "unhealthy"`, the reason, and the failure counters
+when the engine reports itself unhealthy, and 200 otherwise. An engine that
+publishes no health report at all is served as healthy, because the `Engine`
+protocol the API layer depends on is one method wide and stays that way.
+`GET /metrics` carries `port_failures`, `failed_requests`, `healthy` and
+`unhealthy_reason` on the `loop` object.

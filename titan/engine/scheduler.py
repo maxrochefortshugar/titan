@@ -43,8 +43,12 @@ building one call that carries both, and nothing above ``step`` would change.
 
 from __future__ import annotations
 
+import logging
 import queue
+import sys
 import threading
+import time
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Protocol, Sequence
 
@@ -68,9 +72,17 @@ __all__ = [
     "SchedulerPolicy",
     "Scheduler",
     "LoopStats",
+    "EngineHealth",
     "FifoPolicy",
     "EngineLoop",
 ]
+
+logger = logging.getLogger(__name__)
+
+#: Returned by :meth:`EngineLoop._guarded` when the port call raised. A
+#: sentinel rather than ``None`` because plenty of port calls return ``None``
+#: on success and the caller has to tell the two apart.
+FAILED = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +98,34 @@ class LoopStats:
     mean_rows_per_cycle: float
     queue_depth: int
     resident_gb: float
+    port_failures: int = 0
+    failed_requests: int = 0
+    healthy: bool = True
+    unhealthy_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EngineHealth:
+    """Whether the engine is serving, and why not when it is not.
+
+    ``healthy`` is False only for a fault the engine cannot serve through: a
+    backend that failed its warm-up probe twice running, a device error, or a
+    loop step the watchdog caught over its budget. A request that dies on its
+    own bad luck leaves the engine healthy and takes only itself down.
+    """
+
+    healthy: bool
+    reason: str | None = None
+    port_failures: int = 0
+    failed_requests: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "healthy": self.healthy,
+            "reason": self.reason,
+            "port_failures": self.port_failures,
+            "failed_requests": self.failed_requests,
+        }
 
 
 class SchedulerPolicy(Protocol):
@@ -227,6 +267,30 @@ class _Cancel:
 
 
 # ---------------------------------------------------------------------------
+# classifying a fault
+# ---------------------------------------------------------------------------
+
+
+_DEVICE_MARKERS = ("metal", "command buffer", "gpu", "device error", "out of memory")
+
+
+def _is_device_error(exc: BaseException) -> bool:
+    """Whether a fault is the device rather than the request.
+
+    Matched on the exception's own module and on a short list of markers,
+    because the framework does not export an exception type to catch: an MLX
+    Metal fault arrives as a ``RuntimeError`` with the driver's message in it.
+    A false positive costs an engine that stops admitting until it is
+    restarted, so the markers are narrow and the module test is exact.
+    """
+    module = type(exc).__module__.split(".")[0]
+    if module in {"mlx", "metal"}:
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _DEVICE_MARKERS)
+
+
+# ---------------------------------------------------------------------------
 # the loop
 # ---------------------------------------------------------------------------
 
@@ -255,6 +319,9 @@ class EngineLoop:
         rows_budget: int = 32,
         max_admissions_per_turn: int = 4,
         store_drain_max_s: float = 2.0,
+        step_budget_s: float = 120.0,
+        watchdog_poll_s: float = 0.5,
+        probe_failures_to_unhealthy: int = 2,
     ) -> None:
         self.backend = backend
         self.tokenizer = tokenizer
@@ -278,12 +345,43 @@ class EngineLoop:
         self._commands: queue.SimpleQueue = queue.SimpleQueue()
         self._wake = threading.Event()
         self._stopping = threading.Event()
+        # Set the moment ``run_forever`` claims a thread, cleared when it lets
+        # go. A runner waits on it at start so that a stop arriving in the
+        # window between the two can never drain the loop from a second thread.
+        self._running = threading.Event()
         self._waiting = WaitQueue(depth=self.config.queue_depth)
         self._live: list[SequenceState] = []
         self._plans: dict[int, AdmissionPlan] = {}
         self._sinks: dict[str, Callable[[Any], None]] = {}
         self._pending_error: dict[int, str | None] = {}
         self._cancelled: set[str] = set()
+        self._leases: dict[int, Any] = {}
+
+        # -- failure handling -----------------------------------------------
+        # Everything the loop thread calls into a port goes through
+        # ``_guarded``, so a fault is a finished request rather than a dead
+        # thread. What is counted here is what ``/metrics`` and ``/health``
+        # report; see the failure-handling contract in docs/architecture.
+        self._healthy = True
+        self._unhealthy_reason: str | None = None
+        self._port_failures = 0
+        self._failed_requests = 0
+        self._probe_failures = 0
+        self.probe_failures_to_unhealthy = max(1, int(probe_failures_to_unhealthy))
+
+        # -- the watchdog ----------------------------------------------------
+        # A step that never returns cannot report itself, so the budget is
+        # checked from a second thread against a wall clock. The injected clock
+        # is not used: a test clock that ticks per read would make the budget a
+        # count of reads rather than a duration.
+        self.step_budget_s = float(step_budget_s)
+        self.watchdog_poll_s = max(0.001, float(watchdog_poll_s))
+        self._step_started: float | None = None
+        self._watchdog_fired = False
+        self._loop_thread_id: int | None = None
+        self._watchdog: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
+        self.last_stall_stack: str | None = None
 
         # -- the store path -------------------------------------------------
         # One session per live sequence, opened at admission. The loop tells it
@@ -324,6 +422,228 @@ class EngineLoop:
         self._commands.put(_Cancel(request_id=request_id))
         self._wake.set()
 
+    # -- failure handling --------------------------------------------------
+    def health(self) -> EngineHealth:
+        """Whether the engine is serving. Read by ``GET /health``."""
+        return EngineHealth(
+            healthy=self._healthy,
+            reason=self._unhealthy_reason,
+            port_failures=self._port_failures,
+            failed_requests=self._failed_requests,
+        )
+
+    def mark_unhealthy(self, reason: str) -> None:
+        """Stop admitting. The first reason wins, because it is the cause.
+
+        Nothing here tears the loop down: a loop that is still turning can
+        still cancel, still drain and still answer the requests it already
+        holds, and an engine that kills its own thread is the hang this whole
+        path exists to prevent.
+        """
+        if self._healthy:
+            self._healthy = False
+            self._unhealthy_reason = reason
+            logger.error("engine marked unhealthy: %s", reason)
+            self.profiler.event("engine_unhealthy", reason=reason)
+            self._count("engine.unhealthy")
+
+    def mark_healthy(self) -> None:
+        """Clear the flag. Only an operator action should call this."""
+        self._healthy = True
+        self._unhealthy_reason = None
+        self._probe_failures = 0
+
+    def _count(self, name: str, amount: int = 1) -> None:
+        counter = getattr(self.profiler, "count", None)
+        if callable(counter):
+            counter(name, amount)
+
+    def _guarded(
+        self,
+        op: str,
+        sequences: Sequence[SequenceState],
+        fn: Callable[..., Any],
+        *args: Any,
+        probe: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        """Call one port. Return its value, or :data:`FAILED` if it raised.
+
+        This is the whole fix in one method. Every call the loop thread makes
+        out of the engine goes through it, so the blast radius of an exception
+        is the sequences named in ``sequences`` and nothing else: they finish
+        with an error, their state and their lease are released by the ordinary
+        retirement path, and the turn carries on with everybody else.
+
+        ``TitanError`` and a bare ``RuntimeError`` are treated identically on
+        purpose. The taxonomy says what a fault means; it has never said
+        whether the loop survives it, and the two rounds lost to this bug were
+        both a port raising something outside the taxonomy.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - the point of the method
+            self._port_failed(op, sequences, exc, probe=probe)
+            return FAILED
+
+    def _port_failed(
+        self,
+        op: str,
+        sequences: Sequence[SequenceState],
+        exc: BaseException,
+        *,
+        probe: bool = True,
+    ) -> None:
+        message = f"{op} failed: {type(exc).__name__}: {exc}"
+        self._port_failures += 1
+        logger.error(
+            "port call %s failed for %d sequence(s)",
+            op,
+            len(sequences),
+            exc_info=exc,
+        )
+        self.profiler.event(
+            "port_failed",
+            op=op,
+            kind=type(exc).__name__,
+            reason=str(exc),
+            sequences=len(sequences),
+        )
+        self._count("engine.port_failures")
+        self._count(f"engine.port_failures.{op}")
+        for sequence in sequences:
+            self._failed_requests += 1
+            self._finish(sequence, FinishReason.ERROR, error=message)
+        if _is_device_error(exc):
+            self.mark_unhealthy(f"device error in {op}: {exc}")
+            return
+        if probe:
+            self._run_probe()
+
+    def _run_probe(self) -> None:
+        """Ask the backend whether it is still there.
+
+        A warm-up is the cheapest call the port has that still touches the
+        device, so it is the probe. One failure is a bad moment; two in a row
+        with no success between them is a backend that is not coming back, and
+        the engine stops taking work rather than failing every request it
+        admits one at a time.
+        """
+        warm = getattr(self.backend, "warmup", None)
+        if not callable(warm):
+            return
+        try:
+            warm()
+        except Exception as exc:  # noqa: BLE001 - the probe is the diagnosis
+            self._probe_failures += 1
+            self.profiler.event(
+                "warmup_probe_failed",
+                reason=str(exc),
+                consecutive=self._probe_failures,
+            )
+            self._count("engine.probe_failures")
+            if self._probe_failures >= self.probe_failures_to_unhealthy:
+                self.mark_unhealthy(
+                    f"warm-up probe failed {self._probe_failures} times in a row: {exc}"
+                )
+        else:
+            self._probe_failures = 0
+
+    def _fail_all(self, reason: str) -> None:
+        """Fail every live sequence with the same error. Used when the fault
+        is the loop's own rather than one request's."""
+        for sequence in list(self._live):
+            self._failed_requests += 1
+            self._finish(sequence, FinishReason.ERROR, error=reason)
+
+    def on_step_error(self, exc: BaseException) -> bool:
+        """A step raised anyway. Fail everything it was holding and carry on.
+
+        Nothing inside ``step`` is supposed to reach here: every port call is
+        guarded and the engine's own code is not allowed to raise. It is here
+        because the cost of being wrong about that is a thread that stops and
+        clients that wait forever, and the cost of the belt is one try block.
+        """
+        message = f"engine loop step failed: {type(exc).__name__}: {exc}"
+        logger.error("engine loop step raised", exc_info=exc)
+        self.profiler.event("loop_step_failed", kind=type(exc).__name__, reason=str(exc))
+        self._count("engine.step_failures")
+        self._port_failures += 1
+        self.mark_unhealthy(message)
+        self._fail_all(message)
+        try:
+            self._retire()
+        except Exception:  # noqa: BLE001 - retirement is the last thing left
+            logger.exception("retirement failed after a loop step error")
+        return True
+
+    # -- the watchdog --------------------------------------------------------
+    def check_step_deadline(self, now: float | None = None) -> bool:
+        """Fire the watchdog if the step in flight has run past its budget.
+
+        Called from the watchdog thread, and directly from tests, which is why
+        it takes the clock as an argument rather than reading one. Fires once
+        per step: a stuck step should produce one stack and one incident, not
+        one every poll.
+        """
+        started = self._step_started
+        if started is None or self.step_budget_s <= 0.0 or self._watchdog_fired:
+            return False
+        elapsed = (time.monotonic() if now is None else now) - started
+        if elapsed < self.step_budget_s:
+            return False
+        self._watchdog_fired = True
+        self.last_stall_stack = self._loop_stack()
+        logger.error(
+            "engine loop step has been running for %.1fs (budget %.1fs); "
+            "loop thread stack:\n%s",
+            elapsed,
+            self.step_budget_s,
+            self.last_stall_stack,
+        )
+        self.profiler.event("loop_stalled", seconds=elapsed, budget=self.step_budget_s)
+        self._count("engine.loop_stalls")
+        self.mark_unhealthy(
+            f"loop step exceeded its {self.step_budget_s:g}s budget "
+            f"(running for {elapsed:.1f}s)"
+        )
+        return True
+
+    def _loop_stack(self) -> str:
+        """The loop thread's stack, from the thread that noticed the stall.
+
+        ``sys._current_frames`` rather than ``faulthandler.dump_traceback``:
+        the same information, addressed to one thread, returned as a string a
+        log line and a test can both hold. faulthandler writes every thread to
+        a file descriptor, which is the wrong shape for both.
+        """
+        thread_id = self._loop_thread_id
+        if thread_id is None:
+            return "(the loop is not running on a thread of its own)"
+        frame = sys._current_frames().get(thread_id)
+        if frame is None:
+            return f"(no frame for loop thread {thread_id})"
+        return "".join(traceback.format_stack(frame))
+
+    def _start_watchdog(self) -> None:
+        if self._watchdog is not None or self.step_budget_s <= 0.0:
+            return
+        self._watchdog_stop.clear()
+        self._watchdog = threading.Thread(
+            target=self._watch, name="titan-engine-watchdog", daemon=True
+        )
+        self._watchdog.start()
+
+    def _stop_watchdog(self) -> None:
+        self._watchdog_stop.set()
+        self._watchdog = None
+
+    def _watch(self) -> None:
+        while not self._watchdog_stop.wait(self.watchdog_poll_s):
+            if self._stopping.is_set() and self._step_started is None:
+                return
+            self.check_step_deadline()
+
     # -- one turn ----------------------------------------------------------
     def step(self) -> bool:
         """Run one turn. Returns True if the turn did any work.
@@ -333,54 +653,180 @@ class EngineLoop:
         its thread.
         """
         self._turns += 1
-        worked = self._drain_commands()
-        worked |= self._admit_ready()
+        # The watchdog reads this. Set before any work and cleared in the
+        # finally, so the window it measures is exactly one step.
+        self._step_started = time.monotonic()
+        self._watchdog_fired = False
+        try:
+            worked = self._drain_commands()
+            worked |= self._admit_ready()
 
-        # MIXED BATCH SEAM. Prefill and decode are separate phases (D14). One
-        # call that carried both would replace this branch and nothing above it.
-        chunk = self._next_prefill_chunk()
-        if chunk is not None:
-            self._run_prefill(chunk)
-            worked = True
-        else:
-            worked |= self._run_decode()
+            # MIXED BATCH SEAM. Prefill and decode are separate phases (D14).
+            # One call that carried both would replace this branch and nothing
+            # above it.
+            chunk = self._next_prefill_chunk()
+            if chunk is not None:
+                self._run_prefill(chunk)
+                worked = True
+            else:
+                worked |= self._run_decode()
 
-        worked |= self._retire()
-        # Last, so a boundary the prefill above just staged is serialised on
-        # the same turn it was reached, and so the budget is spent on what is
-        # left after the forward rather than in front of it.
-        worked |= self._pump_stores()
-        return worked
+            worked |= self._retire()
+            # Last, so a boundary the prefill above just staged is serialised
+            # on the same turn it was reached, and so the budget is spent on
+            # what is left after the forward rather than in front of it.
+            worked |= self._pump_stores()
+            return worked
+        finally:
+            self._step_started = None
 
     def run_forever(self) -> None:
-        """Own the calling thread until :meth:`shutdown`."""
-        while not self._stopping.is_set():
-            if not self.step():
-                # Nothing to do. Block on the wake event rather than spin, so an
-                # idle engine costs no CPU and a submit is picked up at once.
-                self._wake.wait(timeout=0.05)
-                self._wake.clear()
+        """Own the calling thread until :meth:`shutdown`.
+
+        The thread outlives every fault it can survive. That is the contract
+        the asyncio side depends on: a client is waiting on a queue that only
+        this thread feeds, so a thread that dies is a request that never
+        finishes and a connection that never closes.
+        """
+        self._loop_thread_id = threading.get_ident()
+        self._running.set()
+        self._start_watchdog()
+        try:
+            while not self._stopping.is_set():
+                try:
+                    worked = self.step()
+                except Exception as exc:  # noqa: BLE001 - the thread survives
+                    worked = self.on_step_error(exc)
+                if not worked:
+                    # Nothing to do. Block on the wake event rather than spin,
+                    # so an idle engine costs no CPU and a submit is picked up
+                    # at once.
+                    self._wake.wait(timeout=0.05)
+                    self._wake.clear()
+        finally:
+            self._stop_watchdog()
+            self._loop_thread_id = None
+            self._running.clear()
+
+    def wait_until_running(self, timeout_s: float = 1.0) -> bool:
+        """Block until :meth:`run_forever` owns a thread, or the timeout ends.
+
+        Answers whether it happened rather than raising: a loop that has not
+        started is a slow start on some paths and a stub runner on others, and
+        neither is the caller's to diagnose.
+        """
+        return self._running.wait(timeout=max(0.0, timeout_s))
 
     def shutdown(self, drain_timeout_s: float = 5.0) -> None:
-        """Stop the loop and free every sequence, draining what it can."""
-        deadline = self.clock.now() + max(0.0, drain_timeout_s)
+        """Stop the loop and free every sequence, draining what it can.
+
+        Bounded by ``drain_timeout_s`` against a wall clock on every path,
+        including the one where a step is wedged inside a port call. When the
+        loop thread does not come back in time, the sequences it holds are
+        still answered -- an ``ABORT`` ``StreamEnd`` each, so no client is left
+        on a queue nobody will feed -- and their state handles are left alone,
+        because closing a handle under a thread that is still using it trades a
+        hang for a crash.
+        """
+        budget = max(0.0, drain_timeout_s)
+        deadline = time.monotonic() + budget
         self._stopping.set()
         self._wake.set()
-        while self._live and self.clock.now() < deadline:
-            self.step()
+
+        owner = self._loop_thread_id
+        if owner is not None and owner != threading.get_ident():
+            # The loop owns a thread of its own. Wait for it to notice rather
+            # than stepping in parallel with it: two threads in one turn is a
+            # worse failure than a slow shutdown.
+            while self._loop_thread_id is not None and time.monotonic() < deadline:
+                time.sleep(min(0.005, self.watchdog_poll_s))
+            if self._loop_thread_id is not None:
+                self._abandon_to_stuck_loop()
+                return
+        else:
+            while self._live and time.monotonic() < deadline:
+                try:
+                    self.step()
+                except Exception as exc:  # noqa: BLE001 - shutdown finishes
+                    self.on_step_error(exc)
+                    break
+
         for sequence in list(self._live):
             self._finish(sequence, FinishReason.ABORT, error="engine shutting down")
         self._retire()
+        self._drain_waiting("engine shutting down")
         # Whatever a retirement deferred still owns a state handle. Give it the
         # rest of the drain window, then take the handles back.
-        while self._store_drains and self.clock.now() < deadline:
+        while self._store_drains and time.monotonic() < deadline:
             self._pump_stores()
         for entry in list(self._store_drains):
-            entry.session.abandon()
-            entry.session.finish(entry.tokens, entry.covered)
+            self._guarded("store.abandon", (), entry.session.abandon, probe=False)
+            self._guarded(
+                "store.finish", (), entry.session.finish, entry.tokens, entry.covered,
+                probe=False,
+            )
             if entry.state is not None:
-                self.backend.close_state(entry.state)
+                self._guarded(
+                    "backend.close_state", (), self.backend.close_state, entry.state,
+                    probe=False,
+                )
         self._store_drains.clear()
+
+    def _abandon_to_stuck_loop(self) -> None:
+        """The drain window closed with the loop thread still inside a step.
+
+        Everything waiting on this engine is answered here and the loop thread
+        is left to whatever it is doing. It is a daemon thread, so it cannot
+        hold the process open, and nothing after this point touches state it
+        might still be reading.
+        """
+        logger.error(
+            "engine shutdown timed out with a loop step still running; "
+            "abandoning %d live sequence(s)",
+            len(self._live),
+        )
+        self.profiler.event("shutdown_abandoned", live=len(self._live))
+        self._count("engine.shutdown_abandoned")
+        self.mark_unhealthy("shut down while a loop step was still running")
+        for sequence in list(self._live):
+            self._emit_for(
+                sequence.request.request_id,
+                StreamEnd(
+                    request_id=sequence.request.request_id,
+                    finish_reason=FinishReason.ABORT,
+                    prompt_tokens=sequence.prompt_len,
+                    cached_tokens=sequence.restored_from,
+                    completion_tokens=sequence.committed,
+                    error="engine shutting down while this sequence was in flight",
+                ),
+            )
+            self._sinks.pop(str(sequence.request.request_id), None)
+        self._drain_waiting("engine shutting down")
+
+    def _drain_waiting(
+        self, reason: str, finish_reason: FinishReason = FinishReason.ABORT
+    ) -> int:
+        """Answer every queued request that never got a seat.
+
+        Called on shutdown, and again the first turn after the engine goes
+        unhealthy: a request that was queued a moment before the fault is owed
+        the same answer as one that arrives a moment after it, and the only
+        thing that would otherwise reach it is the loop stopping.
+        """
+        entries = self._waiting.drain()
+        for entry in entries:
+            self._emit_to(
+                entry.sink,
+                StreamEnd(
+                    request_id=entry.request.request_id,
+                    finish_reason=finish_reason,
+                    prompt_tokens=len(entry.request.prompt_tokens),
+                    cached_tokens=0,
+                    completion_tokens=0,
+                    error=reason,
+                ),
+            )
+        return len(entries)
 
     def stats(self) -> LoopStats:
         return LoopStats(
@@ -395,6 +841,10 @@ class EngineLoop:
             ),
             queue_depth=len(self._waiting),
             resident_gb=self.resident_gb(),
+            port_failures=self._port_failures,
+            failed_requests=self._failed_requests,
+            healthy=self._healthy,
+            unhealthy_reason=self._unhealthy_reason,
         )
 
     @property
@@ -412,7 +862,12 @@ class EngineLoop:
         """
         probe = getattr(self.backend, "resident_gb", None)
         if callable(probe):
-            return float(probe())
+            # Guarded like any other port call, and with nobody to fail: the
+            # answer feeds admission, so a probe that raises falls back to the
+            # model rather than taking the turn down with it.
+            measured = self._guarded("backend.resident_gb", (), probe, probe=False)
+            if measured is not FAILED:
+                return float(measured)
         total = self.config.weights_gb
         for sequence in self._live:
             plan = self._plans.get(int(sequence.sequence_id))
@@ -439,6 +894,24 @@ class EngineLoop:
         return worked
 
     def _accept(self, command: _Submit) -> None:
+        if not self._healthy:
+            # Refused here rather than queued, so the caller learns now. The
+            # API layer turns this into a 503; see the failure-handling
+            # contract in docs/architecture/ENGINE.md.
+            self._rejected += 1
+            self._count("engine.refused_unhealthy")
+            self._emit_to(
+                command.sink,
+                StreamEnd(
+                    request_id=command.request.request_id,
+                    finish_reason=FinishReason.ERROR,
+                    prompt_tokens=len(command.request.prompt_tokens),
+                    cached_tokens=0,
+                    completion_tokens=0,
+                    error=f"engine unhealthy: {self._unhealthy_reason}",
+                ),
+            )
+            return
         try:
             self._waiting.push(command.request, command.sink)
         except CapacityError as exc:
@@ -483,14 +956,38 @@ class EngineLoop:
         decode. The bound is the only fairness knob the loop has and it is
         deliberately small.
         """
+        if not self._healthy:
+            # Nothing is admitted while the engine is unhealthy, and nothing is
+            # left queued either. Done here, on the loop thread, rather than in
+            # ``mark_unhealthy``, which the watchdog thread also calls: the
+            # wait queue belongs to this thread and is not going to start
+            # having a lock put on it for a failure path.
+            drained = self._drain_waiting(
+                f"engine unhealthy: {self._unhealthy_reason}", FinishReason.ERROR
+            )
+            self._rejected += drained
+            return drained > 0
+
         worked = False
         for _ in range(self.max_admissions_per_turn):
             if not len(self._waiting):
                 break
             resident = self.resident_gb()
-            entry = self._waiting.select(
-                lambda request: self.policy.admit(request, self._live, resident)
+            entry = self._guarded(
+                "policy.admit",
+                (),
+                self._waiting.select,
+                lambda request: self.policy.admit(request, self._live, resident),
+                probe=False,
             )
+            if entry is FAILED:
+                # A policy that raises cannot be asked again this turn, and the
+                # queue is intact: nothing was taken off it. The waiting
+                # requests keep their place and the engine is marked unhealthy,
+                # because a scheduler that cannot decide who runs is not
+                # serving even if every sequence already admitted finishes.
+                self.mark_unhealthy("the admission policy raised")
+                break
             if entry is None:
                 break
             if str(entry.request.request_id) in self._cancelled:
@@ -505,6 +1002,10 @@ class EngineLoop:
             plan = self.admitter.plan(request)
             sequence = self.admitter.start(plan, self.resident_gb())
         except TitanError as exc:
+            # The request is refused, which is an answer rather than a fault:
+            # too long, no room, no prompt. Anything else is handled below as a
+            # port failure, because an admitter that raises a KeyError is a
+            # broken engine and not a bad request.
             self._rejected += 1
             self._emit_to(
                 sink,
@@ -518,12 +1019,33 @@ class EngineLoop:
                 ),
             )
             return
+        except Exception as exc:  # noqa: BLE001 - admission is a port call
+            self._rejected += 1
+            self._failed_requests += 1
+            self._port_failed("admission", (), exc)
+            self._emit_to(
+                sink,
+                StreamEnd(
+                    request_id=request.request_id,
+                    finish_reason=FinishReason.ERROR,
+                    prompt_tokens=len(request.prompt_tokens),
+                    cached_tokens=0,
+                    completion_tokens=0,
+                    error=f"admission failed: {type(exc).__name__}: {exc}",
+                ),
+            )
+            return
         self._admitted += 1
         self._live.append(sequence)
         self._plans[int(sequence.sequence_id)] = plan
         opener = getattr(self.cache, "begin_store", None)
         if callable(opener):
-            self._store_sessions[int(sequence.sequence_id)] = opener()
+            session = self._guarded(
+                "cache.begin_store", (), opener, probe=False
+            )
+            if session is not FAILED:
+                self._store_sessions[int(sequence.sequence_id)] = session
+        self._take_lease(sequence, plan)
         self._sinks[str(request.request_id)] = sink
         self.profiler.event(
             "admitted",
@@ -554,7 +1076,42 @@ class EngineLoop:
             # a one-token prompt, or a full cache hit on the prefill prefix.
             sequence.phase = SequencePhase.DECODING
 
+    # -- cache leases ------------------------------------------------------
+    def _take_lease(self, sequence: SequenceState, plan: AdmissionPlan) -> None:
+        """Pin the prefix this sequence was restored from, if the cache offers
+        leases. A cache without ``reserve`` keeps the old behaviour."""
+        reserve = getattr(self.cache, "reserve", None)
+        if not callable(reserve) or plan.match.matched_tokens <= 0:
+            return
+        lease = self._guarded("cache.reserve", (), reserve, plan.match, probe=False)
+        if lease is not FAILED and lease is not None:
+            self._leases[int(sequence.sequence_id)] = lease
+
+    def _release_lease(self, sequence_id: int) -> None:
+        """Drop a lease on every exit path, error and abort included.
+
+        A lease that outlives its sequence pins its prefix for the life of the
+        process, so this is called from retirement rather than from the happy
+        path, and it is guarded because a cache that raises here must not stop
+        the sequence from retiring.
+        """
+        lease = self._leases.pop(sequence_id, None)
+        if lease is None:
+            return
+        release = getattr(self.cache, "release", None)
+        if callable(release):
+            self._guarded("cache.release", (), release, lease, probe=False)
+
     def _next_prefill_chunk(self) -> PrefillChunk | None:
+        if not self._live:
+            return None
+        chunk = self._guarded(
+            "schedule.next_prefill", tuple(self._live), self._pick_prefill_chunk,
+            probe=False,
+        )
+        return None if chunk is FAILED else chunk
+
+    def _pick_prefill_chunk(self) -> PrefillChunk | None:
         for sequence in self._live:
             if sequence.phase is not SequencePhase.PREFILLING:
                 continue
@@ -578,34 +1135,38 @@ class EngineLoop:
         if sequence is None:  # pragma: no cover - retired between stages
             return
         started = self.clock.now()
-        try:
-            # want_logits stays False even on the last chunk. The engine may not
-            # read logits, and the prompt's final token is the first decode
-            # input, so the head would be run for an answer nobody consumes --
-            # 48 to 95 ms per chunk of it.
-            self.backend.prefill(
-                sequence.state,
-                sequence.tokens[chunk.start : chunk.end],
-                want_logits=False,
-                snapshot=chunk.emit_snapshot,
-                # The token after the chunk. Prefill does not consume it --
-                # the decode invariant leaves the last one pending -- but a
-                # backend that folds the prompt into a draft head's cache
-                # needs it to close the chunk's last pair. Always in range:
-                # prefill plans stop one token short of the prompt.
-                next_token=(
-                    sequence.tokens[chunk.end]
-                    if chunk.end < len(sequence.tokens)
-                    else None
-                ),
-                # How much of the sequence is still ahead of this chunk. Only
-                # the scheduler knows, because the scheduler is what cut the
-                # prompt up, and a backend priming only the prompt's tail
-                # cannot tell a middle chunk from the last one without it.
-                tokens_after=max(0, len(sequence.tokens) - chunk.end),
-            )
-        except TitanError as exc:
-            self._finish(sequence, FinishReason.ERROR, error=str(exc))
+        # want_logits stays False even on the last chunk. The engine may not
+        # read logits, and the prompt's final token is the first decode
+        # input, so the head would be run for an answer nobody consumes --
+        # 48 to 95 ms per chunk of it.
+        outcome = self._guarded(
+            "backend.prefill",
+            (sequence,),
+            self.backend.prefill,
+            sequence.state,
+            sequence.tokens[chunk.start : chunk.end],
+            want_logits=False,
+            snapshot=chunk.emit_snapshot,
+            # The token after the chunk. Prefill does not consume it --
+            # the decode invariant leaves the last one pending -- but a
+            # backend that folds the prompt into a draft head's cache
+            # needs it to close the chunk's last pair. Always in range:
+            # prefill plans stop one token short of the prompt.
+            next_token=(
+                sequence.tokens[chunk.end]
+                if chunk.end < len(sequence.tokens)
+                else None
+            ),
+            # How much of the sequence is still ahead of this chunk. Only
+            # the scheduler knows, because the scheduler is what cut the
+            # prompt up, and a backend priming only the prompt's tail
+            # cannot tell a middle chunk from the last one without it.
+            tokens_after=max(0, len(sequence.tokens) - chunk.end),
+        )
+        if outcome is FAILED:
+            # The sequence is already finishing with an error and its state is
+            # released at the end of this turn. Every other sequence keeps its
+            # place in the loop, which is the whole point.
             return
         sequence.prefill_position = chunk.end
         self._prefill_chunks += 1
@@ -628,16 +1189,34 @@ class EngineLoop:
             sequence.phase = SequencePhase.DECODING
 
     def _run_decode(self) -> bool:
-        ids = self.policy.decode_batch(self._live)
+        if not self._live:
+            # Nothing to schedule, so nothing to ask the policy. The early
+            # return is what stops a policy that raises from becoming a turn
+            # that always claims work: the failure would fail no sequences,
+            # report progress, and the loop would spin on it at full tilt.
+            return False
+        ids = self._guarded(
+            "policy.decode_batch", tuple(self._live), self.policy.decode_batch,
+            self._live, probe=False,
+        )
+        if ids is FAILED:
+            # Every sequence the policy was asked about is finishing with an
+            # error now. Report no work: retirement is what the turn has left
+            # to do and it reports for itself.
+            return False
         if not ids:
             return False
         wanted = {int(i) for i in ids}
         batch = [s for s in self._live if int(s.sequence_id) in wanted]
-        try:
-            result = self.cycle.run(batch)
-        except TitanError as exc:
-            for sequence in batch:
-                self._finish(sequence, FinishReason.ERROR, error=str(exc))
+        # One guarded call for the whole cycle, and the blast radius is the
+        # batch. Everything the cycle touches -- the drafter, the n-gram index,
+        # verify, the tokenizer, the codec -- raises through here, so a fault
+        # in any of them fails the sequences that shared the forward and
+        # nobody else. A batch of one fails one request; a batch of eight fails
+        # eight, which is the price of sharing a forward and is stated in the
+        # contract rather than discovered.
+        result = self._guarded("cycle.run", tuple(batch), self.cycle.run, batch)
+        if result is FAILED:
             return True
         self._decode_cycles += 1
         self._rows += result.profile.n_rows
@@ -702,11 +1281,19 @@ class EngineLoop:
                     sequence=entry.sequence_id,
                     boundaries=entry.session.pending,
                 )
-                entry.session.abandon()
-            entry.session.finish(entry.tokens, entry.covered)
+                self._guarded(
+                    "store.abandon", (), entry.session.abandon, probe=False
+                )
+            self._guarded(
+                "store.finish", (), entry.session.finish, entry.tokens,
+                entry.covered, probe=False,
+            )
             self._store_drains.remove(entry)
             if entry.state is not None:
-                self.backend.close_state(entry.state)
+                self._guarded(
+                    "backend.close_state", (), self.backend.close_state,
+                    entry.state, probe=False,
+                )
             self.profiler.event("store_drained", sequence=entry.sequence_id)
         return worked
 
@@ -725,8 +1312,12 @@ class EngineLoop:
                 session.pump(tokens, state, budget_s=budget, force_one=force_one)
             )
         except Exception as exc:  # noqa: BLE001 - a store fault never kills a turn
+            # The sequence survives a store fault: what it loses is the cache
+            # entry, not its answer. Counted like any other port failure, with
+            # no sequence named, which is what "degrade, never lie" costs here.
+            self._port_failed("cache.store", (), exc, probe=False)
             self.profiler.event("store_failed", sequence=sequence_id, reason=str(exc))
-            session.abandon()
+            self._guarded("store.abandon", (), session.abandon, probe=False)
             return 0.0
         self._store_seconds += spent
         self._store_stall_max_s = max(self._store_stall_max_s, spent)
@@ -778,10 +1369,13 @@ class EngineLoop:
             error = self._pending_error.pop(sid, None)
             reason = sequence.finish_reason or FinishReason.STOP
             tail = ""
-            try:
-                tail = self.cycle.release(sequence)
-            except Exception as exc:  # noqa: BLE001 - detok must not kill a turn
-                self.profiler.event("detok_flush_failed", sequence=sid, reason=str(exc))
+            flushed = self._guarded(
+                "tokenizer.flush", (), self.cycle.release, sequence, probe=False
+            )
+            if flushed is FAILED:
+                self.profiler.event("detok_flush_failed", sequence=sid)
+            else:
+                tail = flushed
             if tail and reason is not FinishReason.ABORT:
                 self._emit_for(
                     sequence.request.request_id,
@@ -803,8 +1397,14 @@ class EngineLoop:
                 # emits, it retires, it holds no seat.
                 sequence.state = None
             elif sequence.state is not None:
-                self.backend.close_state(sequence.state)
+                self._guarded(
+                    "backend.close_state", (), self.backend.close_state,
+                    sequence.state, probe=False,
+                )
                 sequence.state = None
+            # Before the terminal event, so a client that reconnects on it
+            # cannot race the prefix it just released.
+            self._release_lease(sid)
             sequence.phase = SequencePhase.DONE
             self._emit_for(
                 sequence.request.request_id,
@@ -883,6 +1483,7 @@ class EngineLoop:
                 return False
             return self._finish_session(session, sequence, covered, boundaries)
         except Exception as exc:  # noqa: BLE001 - a store fault never kills a turn
+            self._port_failed("cache.store", (), exc, probe=False)
             self.profiler.event(
                 "store_failed", sequence=int(sequence.sequence_id), reason=str(exc)
             )

@@ -40,6 +40,7 @@ from titan.api import models as wire
 from titan.api import sse
 from titan.api.ports import Engine, TemplateRenderer, Tokenizer
 from titan.config.settings import AliasConfig, TitanConfig
+from titan.core.errors import EngineUnhealthyError
 from titan.core.types import (
     FinishReason,
     Request,
@@ -99,6 +100,32 @@ class ChatDeps:
     resolved_config: Mapping[str, Any] | None = None
     """The resolved config, redacted, echoed at ``GET /metrics`` so that every
     measurement can name the configuration it came from."""
+
+
+def _engine_health(engine: Any) -> Any:
+    """The engine's health report, or None if it does not publish one.
+
+    Optional on purpose. The ``Engine`` protocol the API layer depends on is
+    one method wide and stays that way; an engine that cannot go unhealthy
+    simply never says so, and every caller here treats a missing report as
+    healthy.
+    """
+    probe = getattr(engine, "health", None)
+    if not callable(probe):
+        return None
+    try:
+        return probe()
+    except Exception:  # noqa: BLE001 - a health check that raises is not news
+        logger.exception("engine health check raised")
+        return None
+
+
+def _unhealthy_reason(engine: Any) -> str | None:
+    """Why the engine is refusing work, or None while it is serving."""
+    health = _engine_health(engine)
+    if health is None or getattr(health, "healthy", True):
+        return None
+    return str(getattr(health, "reason", None) or "engine unhealthy")
 
 
 @dataclass(frozen=True)
@@ -384,31 +411,45 @@ async def _stream_chat(
             out.append(sse.tool_calls_chunk(response_id, model_name, calls, created).to_sse())
         return out
 
+    # An exception from the engine at this point cannot become a status code:
+    # the headers went out with the first keepalive. It becomes an error frame
+    # and a finished stream instead, so the client reads a failure rather than
+    # a connection that dies mid-body and looks like a network fault.
+    failure: str | None = None
     stream = deps.engine.generate(resolved.core_request)
-    async for event in _keepalive_merge(stream, interval):
-        if event is None:
-            if keepalive is not None:
-                yield keepalive
-            if http_request is not None and await http_request.is_disconnected():
-                logger.info("client disconnected during %s; cancelling", response_id)
-                return
-            continue
-        if isinstance(event, StreamEnd):
-            end = event
-            break
-        assert isinstance(event, TokenEvent)
-        if not event.text:
-            continue
-        for frame in frames(*accumulator.feed(event.text)):
-            yield frame
+    try:
+        async for event in _keepalive_merge(stream, interval):
+            if event is None:
+                if keepalive is not None:
+                    yield keepalive
+                if http_request is not None and await http_request.is_disconnected():
+                    logger.info("client disconnected during %s; cancelling", response_id)
+                    return
+                continue
+            if isinstance(event, StreamEnd):
+                end = event
+                break
+            assert isinstance(event, TokenEvent)
+            if not event.text:
+                continue
+            for frame in frames(*accumulator.feed(event.text)):
+                yield frame
+    except asyncio.CancelledError:
+        # The client hung up, or the server is shutting down. Neither is ours
+        # to report, and swallowing it would break the task tree.
+        raise
+    except Exception as exc:  # noqa: BLE001 - the stream owes the client an end
+        failure = f"{type(exc).__name__}: {exc}"
+        logger.exception("engine raised on %s", response_id)
 
     for frame in frames(*accumulator.finish()):
         yield frame
 
-    if end is not None and end.finish_reason is FinishReason.ERROR:
-        message = end.error or "engine error"
-        logger.error("engine error on %s: %s", response_id, message)
-        yield sse.error_frame(message)
+    if failure is None and end is not None and end.finish_reason is FinishReason.ERROR:
+        failure = end.error or "engine error"
+    if failure is not None:
+        logger.error("engine error on %s: %s", response_id, failure)
+        yield sse.error_frame(failure)
 
     finish_reason = sse.finish_reason_for(
         end.finish_reason if end else None, had_tool_calls=accumulator.had_tool_calls
@@ -435,12 +476,31 @@ async def _complete_chat(
     )
     end: StreamEnd | None = None
 
-    async for event in deps.engine.generate(resolved.core_request):
-        if isinstance(event, StreamEnd):
-            end = event
-            break
-        if event.text:
-            accumulator.feed(event.text)
+    try:
+        async for event in deps.engine.generate(resolved.core_request):
+            if isinstance(event, StreamEnd):
+                end = event
+                break
+            if event.text:
+                accumulator.feed(event.text)
+    except ApiError:
+        raise
+    except asyncio.CancelledError:
+        raise
+    except EngineUnhealthyError as exc:
+        # The engine fell over between the readiness check and the submit. Same
+        # answer as if it had happened a moment earlier.
+        raise ApiError(
+            str(exc), status=503, error_type="service_unavailable"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - nothing is on the wire yet
+        # Non-streaming, so there is still a status code to set. The engine's
+        # own message goes through verbatim: a 500 that says "internal error"
+        # and nothing else has cost this project two decode rounds already.
+        logger.exception("engine raised on %s", response_id)
+        raise ApiError(
+            f"{type(exc).__name__}: {exc}", status=500, error_type="server_error"
+        ) from exc
     accumulator.finish()
 
     if end is not None and end.finish_reason is FinishReason.ERROR:
@@ -507,13 +567,30 @@ def build_app(deps: ChatDeps) -> FastAPI:
         return exc.to_response()
 
     @app.get("/health")
-    async def health() -> dict[str, Any]:
-        """Liveness. Unauthenticated on purpose: watchdogs do not carry keys."""
-        return {
+    async def health() -> Any:
+        """Liveness. Unauthenticated on purpose: watchdogs do not carry keys.
+
+        Readiness too, since the two are the same question here: an engine
+        whose loop has failed its warm-up probe or blown its step budget is a
+        process that is up and cannot serve, and answering 200 to that is how
+        a load balancer keeps sending it work.
+        """
+        body: dict[str, Any] = {
             "status": "ok",
             "model": deps.config.model.name,
             "max_context": deps.config.limits.max_context,
         }
+        report = _engine_health(deps.engine)
+        if report is not None:
+            as_dict = getattr(report, "as_dict", None)
+            body["engine"] = (
+                as_dict() if callable(as_dict) else {"healthy": bool(report)}
+            )
+            if not getattr(report, "healthy", True):
+                body["status"] = "unhealthy"
+                body["reason"] = str(getattr(report, "reason", None) or "")
+                return JSONResponse(status_code=503, content=body)
+        return body
 
     @app.get("/metrics", dependencies=[Depends(require_auth)])
     async def metrics(window: int = 0) -> dict[str, Any]:
@@ -573,6 +650,17 @@ def build_app(deps: ChatDeps) -> FastAPI:
     async def chat_completions(
         body: wire.ChatCompletionRequest, http_request: FastAPIRequest
     ) -> Any:
+        reason = _unhealthy_reason(deps.engine)
+        if reason is not None:
+            # Refused before anything is rendered or admitted, so this one is a
+            # status code rather than an error frame. 503 with no Retry-After:
+            # the engine does not know when it is coming back, and a guess
+            # would be a client that hammers a dead process on schedule.
+            raise ApiError(
+                f"engine unhealthy: {reason}",
+                status=503,
+                error_type="service_unavailable",
+            )
         resolved = resolve_generation(deps, body)
         if not body.stream:
             return await _complete_chat(deps, resolved, body)

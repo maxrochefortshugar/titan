@@ -113,6 +113,7 @@ class NullProfiler:
     def __init__(self) -> None:
         self.cycles: list[CycleProfile] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
+        self.counters: dict[str, int] = {}
 
     def cycle(self, profile: CycleProfile) -> None:
         self.cycles.append(profile)
@@ -120,11 +121,21 @@ class NullProfiler:
     def event(self, name: str, **fields: float | int | str) -> None:
         self.events.append((name, dict(fields)))
 
+    def count(self, name: str, amount: int = 1) -> None:
+        # Here rather than only on the real profiler because the loop counts
+        # its failures through this port, and a failure that is only counted
+        # in production is a failure no test can assert on.
+        self.counters[name] = self.counters.get(name, 0) + amount
+
     def span(self, name: str) -> "_NullSpan":
         return _NullSpan()
 
     def snapshot(self) -> Mapping[str, Any]:
-        return {"cycles": len(self.cycles), "events": len(self.events)}
+        return {
+            "cycles": len(self.cycles),
+            "events": len(self.events),
+            **self.counters,
+        }
 
 
 class _NullSpan:
