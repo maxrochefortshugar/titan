@@ -237,6 +237,7 @@ def build_backend(config: TitanConfig, registry: Any) -> Any:
     return MLXModelBackend(
         TitanQwenFlashNext(model, prefill_chunk=config.scheduler.prefill_chunk),
         prime_mtp=config.speculation.enabled and config.speculation.mtp_prime_prompt,
+        prime_window=config.speculation.mtp_prime_window,
     )
 
 
@@ -423,6 +424,7 @@ def build_cycle(
             verifier=build_verifier(config),
             max_depth=config.speculation.mtp_depth_max,
             rows_budget=config.scheduler.decode_rows_budget,
+            overlap_draft=config.speculation.overlap_draft,
         )
     factory = _resolve(
         "titan.engine.decode_cycle", "PlainDecodeCycle", "the plain decode cycle"

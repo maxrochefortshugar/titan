@@ -42,18 +42,25 @@ wait_for_memory() {
   echo "memory not reclaimed after 180s (titan still running or available below ${need_gb} GB)"; return 1
 }
 
+# Closing the port is not the same as the process being gone, and the process
+# being gone is not the same as the 73 GB being back. An earlier version of
+# this returned as soon as the port closed, and the arm after it lost a race
+# with the outgoing server's flock on serve-8085.lock: it printed a config
+# error, never came up, and then sat in the health-check loop for 800 seconds
+# looking like a slow model load. Every exit path from here now ends at
+# wait_for_memory.
 stop() {
   local pids
   pids=$(lsof -nP -iTCP:8085 -sTCP:LISTEN -t 2>/dev/null)
   [ -n "$pids" ] && kill $pids 2>/dev/null
   for _ in $(seq 1 60); do
-    lsof -nP -iTCP:8085 -sTCP:LISTEN -t >/dev/null 2>&1 || return 0
+    lsof -nP -iTCP:8085 -sTCP:LISTEN -t >/dev/null 2>&1 || break
     sleep 1
   done
   pids=$(lsof -nP -iTCP:8085 -sTCP:LISTEN -t 2>/dev/null)
   [ -n "$pids" ] && kill -9 $pids 2>/dev/null
-  sleep 2
-  pkill -f 'titan.cli serve' 2>/dev/null; wait_for_memory 85
+  pkill -f 'titan.cli serve' 2>/dev/null
+  wait_for_memory 85
 }
 
 trap stop EXIT

@@ -177,6 +177,8 @@ class TitanQwenFlashNext:
         want_hidden: bool = False,
         snapshot_every: Optional[int] = None,
         prime_mtp: bool = False,
+        prime_window: int = 0,
+        prime_after: int = 0,
         next_token: Optional[int] = None,
     ) -> PrefillResult:
         """Run *tokens* into *state*, one chunk at a time.
@@ -209,6 +211,17 @@ class TitanQwenFlashNext:
         chunk = int(chunk or self.prefill_chunk)
         state.phase = PHASE_PREFILL
         prime = bool(prime_mtp) and self.language_model.get_mtp_module() is not None
+        # The first pair of this chunk the head is allowed to see, as a local
+        # index. A window of zero means the whole prompt and puts this at zero.
+        # Otherwise the pair at local index ``i`` sits ``total - i +
+        # prime_after`` tokens from the end of the sequence, so the window
+        # admits exactly the indices at or past the constant below. A chunk
+        # that lands entirely before it is not primed at all, which is what
+        # makes the window cheaper than priming and not merely different:
+        # ``return_hidden`` goes off with it.
+        prime_from = 0
+        if prime and prime_window > 0:
+            prime_from = max(0, total + int(prime_after) - int(prime_window))
 
         logits = hidden = None
         start = 0
@@ -216,19 +229,29 @@ class TitanQwenFlashNext:
             stop = min(start + chunk, total)
             piece = ids[:, start:stop]
             last = stop >= total
+            prime_here = prime and stop > prime_from
             self._prefetch_ple(ids, start, stop, chunk)
             want_head = want_logits and last
             output = self.language_model(
                 piece,
                 cache=state.layers,
-                return_hidden=(want_hidden and last) or prime,
+                return_hidden=(want_hidden and last) or prime_here,
                 # Skipping the head is worth 48-95 ms on a 2048-token chunk;
                 # only the final position of the final chunk is ever sampled.
                 skip_logits=not want_head,
             )
             state.length += piece.shape[1]
-            if prime:
-                self._prime_chunk(state, output, ids, start, stop, total, next_token)
+            if prime_here:
+                self._prime_chunk(
+                    state,
+                    output,
+                    ids,
+                    start,
+                    stop,
+                    total,
+                    next_token,
+                    skip=max(0, prime_from - start),
+                )
             if last:
                 logits = output.logits[:, -1:, :] if want_head else None
                 hidden = _first_hidden(output) if want_hidden else None
@@ -256,6 +279,7 @@ class TitanQwenFlashNext:
         stop: int,
         total: int,
         next_token: Optional[int],
+        skip: int = 0,
     ) -> None:
         """Fold one prefill chunk into the MTP head's KV cache.
 
@@ -293,6 +317,13 @@ class TitanQwenFlashNext:
         else:
             fold_ids = mx.concatenate([head, tail], axis=1)
             fold_hidden = hidden
+        if skip:
+            # A windowed prime straddling this chunk: the pairs before the
+            # window start are dropped here rather than never computed, because
+            # the trunk had to run the whole chunk anyway. Only the head's work
+            # and the head's cache are saved, which is the whole point.
+            fold_ids = fold_ids[:, skip:]
+            fold_hidden = fold_hidden[:, skip:, :]
         if fold_ids.shape[1] == 0:
             return
         mtp = self.language_model.get_mtp_module()

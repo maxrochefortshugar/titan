@@ -1166,12 +1166,28 @@ class MTPDecodeCycle(_BaseCycle):
         profiler: Any = None,
         max_depth: int = 3,
         rows_budget: int = 32,
+        overlap_draft: bool = False,
     ) -> None:
         super().__init__(
             backend=backend, tokenizer=tokenizer, clock=clock, profiler=profiler
         )
         self.drafter = drafter
         self.ngram = ngram
+        self.overlap_draft = bool(overlap_draft) and hasattr(drafter, "dispatch")
+        """Dispatch the next cycle's chain at the end of this one.
+
+        The chain's GPU work is then enqueued behind this cycle's verify rather
+        than in front of the next one's, so the wait for it overlaps the
+        commit, the detokenisation and the next cycle's depth planning instead
+        of stalling in the middle of the next cycle.
+
+        It changes nothing about what is drafted: the fold needs the tokens
+        this cycle committed, which the commit has just produced, so the chain
+        dispatched here is the same chain the next cycle would have built.
+        """
+        self._pending: Any = None
+        self.overlap_hits = 0
+        self.overlap_misses = 0
         self.controller = verifier or DepthController(
             max_depth=min(max_depth, getattr(backend, "draft_depth_max", max_depth)),
             rows_budget=rows_budget,
@@ -1192,11 +1208,7 @@ class MTPDecodeCycle(_BaseCycle):
             return list(per_sequence([int(s.sequence_id) for s in batch]))
         return list(self.controller.next_depths(len(batch)))
 
-    def _propose(
-        self, batch: Sequence[SequenceState]
-    ) -> tuple[dict[int, tuple[int, ...]], int]:
-        if self.drafter is None:
-            return {}, 0
+    def _depths_for(self, batch: Sequence[SequenceState]) -> list[int]:
         depths = []
         for sequence, depth in zip(batch, self._plan_depths(batch)):
             depth = min(depth, self.draft_budget(sequence))
@@ -1204,11 +1216,35 @@ class MTPDecodeCycle(_BaseCycle):
             if cap >= 0:
                 depth = min(depth, cap)
             depths.append(depth)
-        if not any(depths):
+        return depths
+
+    def _propose(
+        self, batch: Sequence[SequenceState]
+    ) -> tuple[dict[int, tuple[int, ...]], int]:
+        if self.drafter is None:
             return {}, 0
         states = [s.state for s in batch]
         contexts = [s.tokens for s in batch]
-        candidates = self.drafter.propose(states, contexts, depths)
+
+        pending, self._pending = self._pending, None
+        if pending is not None and pending.matches(states, contexts):
+            # The chain this batch needs is already on the queue.
+            self.overlap_hits += 1
+            candidates = self.drafter.read(pending)
+            depths = [len(c.tokens) for c in candidates]
+        else:
+            if pending is not None:
+                # Dispatched a cycle ago for a batch that no longer exists: a
+                # sequence finished, one was admitted, or a stop truncated a
+                # context. Dropped rather than read. The fold it did is still
+                # sound -- it was of committed tokens -- so the only cost is
+                # this cycle's draft, and the drafter answers the re-proposal
+                # with nothing because there is nothing left uncommitted.
+                self.overlap_misses += 1
+            depths = self._depths_for(batch)
+            if not any(depths):
+                return {}, 0
+            candidates = self.drafter.propose(states, contexts, depths)
         proposals: dict[int, tuple[int, ...]] = {}
         drafted = 0
         # Keyed by the batch's own order rather than by the candidate's
@@ -1266,6 +1302,9 @@ class MTPDecodeCycle(_BaseCycle):
         if self.drafter is not None and hasattr(self.drafter, "observe"):
             self.drafter.observe(outcomes)
 
+        if self.overlap_draft:
+            self._dispatch_next(batch, finished)
+
         wall_ms = (self.clock.now() - started) * 1000.0
         profile = self.finish_profile(
             profile,
@@ -1285,3 +1324,31 @@ class MTPDecodeCycle(_BaseCycle):
         self.controller.record(profile, outcomes)
         self.profiler.cycle(profile)
         return CycleResult(tuple(outcomes), tuple(events), tuple(finished), profile)
+
+    def _dispatch_next(
+        self,
+        batch: Sequence[SequenceState],
+        finished: Sequence[Any],
+    ) -> None:
+        """Enqueue the next cycle's chain, for the sequences that have one.
+
+        Runs after commit, which is the earliest point the fold's inputs exist,
+        and before the profile, which is the latest point that still leaves the
+        GPU something to do while the host finishes the cycle.
+
+        A sequence that finished this cycle is left out, and if that empties
+        the batch nothing is dispatched. Anything else that moves the batch
+        between here and the next cycle is caught by ``_Dispatch.matches``
+        rather than predicted here: the scheduler admits sequences on its own
+        turn and this class does not get a say.
+        """
+        done = {int(getattr(f, "sequence_id", f)) for f in finished}
+        live = [s for s in batch if int(s.sequence_id) not in done]
+        if not live:
+            return
+        depths = self._depths_for(live)
+        if not any(depths):
+            return
+        self._pending = self.drafter.dispatch(
+            [s.state for s in live], [s.tokens for s in live], depths
+        )

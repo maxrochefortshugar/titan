@@ -127,6 +127,7 @@ class ModelBackend(Protocol):
         want_logits: bool = False,
         snapshot: bool = False,
         next_token: int | None = None,
+        tokens_after: int = 0,
     ) -> LogitsRef | None:
         """Process ``tokens`` into ``state``, appending to what it holds.
 
@@ -136,6 +137,12 @@ class ModelBackend(Protocol):
         hidden state at a position with the token after it, so the pair at the
         chunk's last position is the only one the chunk cannot form alone. A
         backend that does nothing with it may ignore it.
+
+        ``tokens_after`` is how many tokens of the sequence follow this chunk.
+        The caller is the only party that knows it, because the caller is what
+        cut the prompt into chunks, and a backend that primes only the tail of
+        a prompt cannot place a chunk on that tail without it. Zero is the
+        honest default for a caller that does not chunk.
 
         Does not sync. Returns a logits reference for the final position only
         when ``want_logits`` (the last chunk of a prompt), otherwise ``None``:

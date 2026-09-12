@@ -478,3 +478,18 @@ def test_every_prefill_chunk_is_handed_the_token_that_follows_it():
     ends = [2048, 4096, 4608, 4999]
     assert backend.prefill_next_tokens == [prompt[e] for e in ends]
     assert None not in backend.prefill_next_tokens
+
+
+def test_every_prefill_chunk_is_told_how_much_of_the_sequence_follows_it():
+    """A backend that primes only the tail of a prompt has to place its chunk
+    on the sequence, and the scheduler is the only party that can tell it: the
+    backend sees a list of tokens and cannot know whether it is the last one.
+    The count is of the sequence, so the final chunk's is one, not zero."""
+    loop, backend, _tokenizer = build_loop()
+    prompt = tuple(range(5000))
+    loop.submit(make_request(prompt, max_tokens=2), Sink())
+    for _ in range(4):
+        loop.step()
+
+    ends = [2048, 4096, 4608, 4999]
+    assert backend.prefill_tokens_after == [len(prompt) - e for e in ends]

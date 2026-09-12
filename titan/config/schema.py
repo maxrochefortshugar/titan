@@ -291,7 +291,7 @@ class SpeculationConfig:
     is 65 MB plus a re-pooled sparse index on a head that holds a 64k prompt.
     ``trim`` appends to the real cache and rewinds it, which is oMLX's form.
     Identical drafts either way."""
-    mtp_prime_prompt: bool = False
+    mtp_prime_prompt: bool = True
     """Fold the prompt into the MTP head's KV cache during prefill.
 
     The head is one sparse-attention layer out of 49, so a fold over the prompt
@@ -299,6 +299,14 @@ class SpeculationConfig:
     seen the prompt at all. Without it the head's cache is empty at the first
     decode cycle and fills only with committed tokens, which is where the 64k
     acceptance defect lives. Draft numerics cannot change output."""
+    mtp_prime_window: int = 1024
+    """Prime only the last this-many tokens of the prompt. 0 primes all of it.
+
+    Priming the whole prompt leaves the head holding a 64k KV cache that it
+    re-attends over once per drafted token, which was measured at 10.3 ms a
+    cycle of draft against 7.1 unprimed. A window is the middle: the head sees
+    the part of the prompt a next-token draft is conditioned on and pays
+    attention over that much only."""
     mtp_head_align_positions: bool = False
     """Give the MTP head the trunk's sequence positions instead of its own.
 
@@ -307,6 +315,15 @@ class SpeculationConfig:
     prompt's length plus that count. On this checkpoint the gap is the prompt,
     which at 64k is the whole position range the head was trained on. Draft
     numerics cannot change output, so this is an acceptance knob."""
+    overlap_draft: bool = False
+    """Dispatch the next cycle's draft chain at the end of this one.
+
+    The chain's GPU work is enqueued behind this cycle's verify instead of in
+    front of the next cycle's, so the host's wait for it overlaps the commit,
+    the detokenisation and the next cycle's depth planning. It cannot change
+    what is drafted -- the fold's inputs are the tokens the commit just
+    produced -- and a dispatch whose batch has moved by the next cycle is
+    dropped rather than read."""
     draft_p_min: float = 0.0
     """Stop the chain past a draft whose top-token probability is below this.
     llama.cpp measured (16, 0.8) beating (4, 0.0) by 20.4% with acceptance
@@ -562,6 +579,7 @@ class TitanConfig:
                 f"speculation.mtp_depth_min ({sp.mtp_depth_min})"
             )
         _positive("speculation.acceptance_window", sp.acceptance_window)
+        _at_least("speculation.mtp_prime_window", sp.mtp_prime_window, 0)
         _at_least("speculation.shortlist_max_block", sp.shortlist_max_block, 1)
         if sp.mtp_chain_cache not in ("clone", "trim"):
             raise ConfigError(

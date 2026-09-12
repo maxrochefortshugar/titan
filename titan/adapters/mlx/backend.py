@@ -52,9 +52,23 @@ class _Logits:
 class MLXModelBackend:
     """One process, one model, one instance."""
 
-    def __init__(self, model: TitanQwenFlashNext, *, prime_mtp: bool = False):
+    def __init__(
+        self,
+        model: TitanQwenFlashNext,
+        *,
+        prime_mtp: bool = False,
+        prime_window: int = 0,
+    ):
         self.model = model
         self.prime_mtp = bool(prime_mtp)
+        self.prime_window = max(0, int(prime_window))
+        """How much of the prompt's tail the priming fold covers. 0 is all of it.
+
+        Priming the whole of a 64k prompt gives the head a 64k KV cache, and
+        the head is then re-attended over all of it once per drafted token: the
+        measured draft time went from 7.1 ms a cycle to 10.3. A window keeps
+        the part of the prompt a draft is actually conditioned on and leaves
+        the rest out of the head's attention."""
         """Fold the prompt into the MTP head's KV cache during prefill.
 
         Off is the head Titan shipped with: an empty head cache at the first
@@ -166,6 +180,7 @@ class MLXModelBackend:
         want_logits: bool = False,
         snapshot: bool = False,
         next_token: int | None = None,
+        tokens_after: int = 0,
     ) -> _Logits | None:
         model_state = self._state(state)
         # No hidden state from a prefill chunk, ever. Asking for it turns on the
@@ -185,6 +200,8 @@ class MLXModelBackend:
             # and keeps none of it -- so it does not go through this flag.
             want_hidden=False,
             prime_mtp=self.prime_mtp and self.draft_depth_max > 0,
+            prime_window=self.prime_window,
+            prime_after=int(tokens_after),
             next_token=next_token,
         )
         if snapshot:

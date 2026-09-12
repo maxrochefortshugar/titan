@@ -187,3 +187,69 @@ def test_want_hidden_still_returns_the_last_chunks_hidden_when_primed():
     )
     assert result.hidden is not None
     assert state.mtp_hidden is not None
+
+
+# -- the window -------------------------------------------------------------
+#
+# Priming the whole of a 64k prompt gives the head a 64k KV cache and it
+# re-attends over all of it once per drafted token. The window is the answer to
+# that, and what it has to get right is the same indexing question as above
+# asked from the other end of the sequence: the pairs it keeps are the last
+# ``window`` of them, counted from the end of the *sequence*, not the end of
+# whatever chunk the caller happens to be running.
+
+
+def test_a_window_wider_than_the_prompt_primes_all_of_it():
+    trunk, model, state = make(chunk=64)
+    model.prefill(
+        list(range(1, 10)), state, prime_mtp=True, prime_window=1000, next_token=10
+    )
+    assert trunk.mtp.folded_ids == [2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+
+def test_a_window_keeps_exactly_the_last_pairs_across_a_chunk_seam():
+    """Twelve pairs, a window of five: ids 9 through 13, and the seam is inside
+    the window rather than on it, which is the case a chunk-local window gets
+    wrong."""
+    trunk, model, state = make(chunk=4)
+    model.prefill(
+        list(range(1, 13)), state, prime_mtp=True, prime_window=5, next_token=13
+    )
+    assert trunk.mtp.folded_ids == [9, 10, 11, 12, 13]
+    assert state.mtp_layers[0].offset == 5
+
+
+def test_a_chunk_entirely_outside_the_window_asks_the_trunk_for_no_hidden():
+    """The saving is not only the fold. A chunk nothing will be folded from
+    does not need its hidden states, and asking for them is what puts the
+    vendored capture path on a 2048-wide chunk."""
+    trunk, model, state = make(chunk=4)
+    model.prefill(
+        list(range(1, 13)), state, prime_mtp=True, prime_window=5, next_token=13
+    )
+    assert [call["return_hidden"] for call in trunk.calls] == [False, True, True]
+
+
+def test_the_window_counts_from_the_end_of_the_sequence_not_of_the_chunk():
+    """The caller chunked the prompt, so only the caller knows the sequence is
+    longer than what it just handed over. With ten tokens still to come, a
+    window of five reaches none of this chunk."""
+    trunk, model, state = make(chunk=4)
+    model.prefill(
+        list(range(1, 13)),
+        state,
+        prime_mtp=True,
+        prime_window=5,
+        prime_after=10,
+        next_token=13,
+    )
+    assert trunk.mtp.folds == []
+    assert not any(call["return_hidden"] for call in trunk.calls)
+
+
+def test_a_window_that_starts_mid_chunk_takes_that_chunks_tail_only():
+    trunk, model, state = make(chunk=8)
+    model.prefill(
+        list(range(1, 9)), state, prime_mtp=True, prime_window=3, next_token=9
+    )
+    assert trunk.mtp.folded_ids == [7, 8, 9]

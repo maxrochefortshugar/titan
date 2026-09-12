@@ -105,6 +105,7 @@ class FakeBackend:
         self.verify_calls: list[int] = []
         self.prefill_calls: list[tuple[int, int, bool]] = []
         self.prefill_next_tokens: list[int | None] = []
+        self.prefill_tokens_after: list[int] = []
         self.truncations: list[tuple[int, int]] = []
         self.staged: list[tuple[int, int]] = []
 
@@ -168,9 +169,14 @@ class FakeBackend:
         want_logits: bool = False,
         snapshot: bool = False,
         next_token: int | None = None,
+        tokens_after: int = 0,
     ) -> None:
         entry = self._state(state)
         entry.tokens.extend(tokens)
+        # Also recorded and not consumed: how much of the sequence follows this
+        # chunk, which a backend priming only a prompt's tail needs and this
+        # one does not.
+        self.prefill_tokens_after.append(int(tokens_after))
         # Recorded, not consumed. The port hands the backend the token after
         # the chunk so a draft head can close its last pair; this backend has
         # no head, and a test asserts it never lands past the prompt.

@@ -89,7 +89,12 @@ def _head_offset(state: Any) -> int:
 
 
 def _sync_and_read(values: mx.array) -> list[float]:
-    """The one host sync of a proposal. Named so a test can count it."""
+    """The one host sync of a proposal. Named so a test can count it.
+
+    The ``async_eval`` is idempotent and is repeated here on purpose: a chain
+    dispatched a cycle early has already been enqueued, and this is still the
+    only place the host waits for it.
+    """
     mx.async_eval(values)
     return values.tolist()
 
@@ -111,6 +116,29 @@ class _Track:
     reset, a restore or a skipped cycle cannot leave it stale."""
     last_cycle: int = 0
     resets: int = 0
+
+
+@dataclass
+class _Dispatch:
+    """A chain that is on the queue and has not been read back yet.
+
+    Carries what ``read`` needs and, beside it, the identity of the batch the
+    chain was built for: the state handles and the context length each
+    sequence had at dispatch time. A caller that dispatches a cycle ahead has
+    to check that the batch it is about to verify is still that batch, and the
+    check belongs on the record rather than in the caller's memory of it.
+    """
+
+    states: tuple[int, ...]
+    lengths: tuple[int, ...]
+    plans: tuple["_Plan", ...]
+    values: Optional[mx.array]
+    candidates: list[DraftCandidate]
+
+    def matches(self, states: Sequence[Any], contexts: Sequence[Sequence[int]]) -> bool:
+        return self.states == tuple(int(h) for h in states) and self.lengths == tuple(
+            len(c) for c in contexts
+        )
 
 
 @dataclass
@@ -195,6 +223,30 @@ class MTPDrafter:
         contexts: Sequence[Sequence[int]],
         depth: Sequence[int],
     ) -> list[DraftCandidate]:
+        """Dispatch a chain and read it back. One call, one host sync.
+
+        Kept as the whole of the port. ``dispatch`` and ``read`` below are the
+        same two halves with the wait in between exposed, for a caller that has
+        host work to put there; every other caller should use this.
+        """
+        return self.read(self.dispatch(states, contexts, depth))
+
+    def dispatch(
+        self,
+        states: Sequence[StateHandle],
+        contexts: Sequence[Sequence[int]],
+        depth: Sequence[int],
+    ) -> _Dispatch:
+        """Build the whole batch's chain and enqueue it. Does not sync.
+
+        Everything with a side effect happens here: the fold appends to each
+        head's committed KV, and the drafter's per-sequence track advances.
+        That is deliberate and it is what makes a dispatch safe to throw away
+        -- the fold was of committed tokens, which belonged in the head cache
+        whether or not anyone reads the drafts it produced. A discarded
+        dispatch costs the next cycle its draft (``committed`` is then zero and
+        the sequence verifies one row) and costs nothing else.
+        """
         self._cycle += 1
         plans: list[_Plan] = []
         parts: list[mx.array] = []
@@ -213,13 +265,35 @@ class MTPDrafter:
             )
             parts.extend(chain)
         if not parts:
-            return candidates
+            return _Dispatch(
+                states=tuple(int(h) for h in states),
+                lengths=tuple(len(c) for c in contexts),
+                plans=(),
+                values=None,
+                candidates=candidates,
+            )
 
         flat = mx.concatenate([p.reshape(1) for p in parts]).astype(mx.float32)
-        self.host_syncs += 1
-        read = _sync_and_read(flat)
+        # Enqueued, not waited on. ``read`` is where the host stops.
+        mx.async_eval(flat)
+        return _Dispatch(
+            states=tuple(int(h) for h in states),
+            lengths=tuple(len(c) for c in contexts),
+            plans=tuple(plans),
+            values=flat,
+            candidates=candidates,
+        )
 
-        for plan in plans:
+    def read(self, pending: _Dispatch) -> list[DraftCandidate]:
+        """Wait for a dispatched chain and turn it into candidates."""
+        candidates = pending.candidates
+        if pending.values is None:
+            return candidates
+        stride = 2 if self.gated else 1
+        self.host_syncs += 1
+        read = _sync_and_read(pending.values)
+
+        for plan in pending.plans:
             tokens: list[int] = []
             logprobs: list[float] = []
             for step in range(plan.depth):
@@ -234,7 +308,7 @@ class MTPDrafter:
                 tokens.append(int(token))
                 logprobs.append(math.log(max(probability, 1e-9)))
             candidates[plan.index] = DraftCandidate(
-                sequence_id=SequenceId(int(states[plan.index])),
+                sequence_id=SequenceId(pending.states[plan.index]),
                 tokens=tuple(tokens),
                 source="mtp" if tokens else "none",
                 draft_logprobs=tuple(logprobs),

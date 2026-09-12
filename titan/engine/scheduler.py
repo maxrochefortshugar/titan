@@ -598,6 +598,11 @@ class EngineLoop:
                     if chunk.end < len(sequence.tokens)
                     else None
                 ),
+                # How much of the sequence is still ahead of this chunk. Only
+                # the scheduler knows, because the scheduler is what cut the
+                # prompt up, and a backend priming only the prompt's tail
+                # cannot tell a middle chunk from the last one without it.
+                tokens_after=max(0, len(sequence.tokens) - chunk.end),
             )
         except TitanError as exc:
             self._finish(sequence, FinishReason.ERROR, error=str(exc))
