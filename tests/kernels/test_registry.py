@@ -31,7 +31,7 @@ from titan.kernels.registry import (
 EXPECTED_OPS = {
     "gdn_norm_gate", "moe_weighted_sum", "hc_prefill", "gdn_chunk_scan",
     "moe_gather_ws", "moe_gather_int8", "grouped_rmsnorm_bf16", "topk_radix",
-    "ple_packed_lookup", "qsa_gathered_attention",
+    "ple_packed_lookup", "qsa_gathered_attention", "verify_accept",
 }
 
 # The names the engine looks ops up by, from titan/kernels/__init__.py.

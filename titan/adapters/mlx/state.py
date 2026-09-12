@@ -26,37 +26,49 @@ last staged point instead of silently recomputing.
 
 from __future__ import annotations
 
-import io
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
 import mlx.core as mx
-import numpy as np
 
+from titan.core.errors import StateError as CoreStateError
+
+from .payload import pack_arrays, unpack_arrays
 from .vendor.mlx_vlm.models.qwen4_exp.cache import ArraysCache
 from .vendor.mlx_vlm.models.qwen4_exp.language import (
     BatchQSAKVCache,
     QSAKVCache,
 )
 
-SNAPSHOT_MAGIC = b"TITANSNAP"
-SNAPSHOT_VERSION = 1
-
 PHASE_PREFILL = "prefill"
 PHASE_DECODE = "decode"
 PHASE_VERIFY = "verify"
 
 
-class StateError(RuntimeError):
-    """A state operation the backend refuses rather than approximates."""
+class StateError(CoreStateError):
+    """A state operation the backend refuses rather than approximates.
+
+    A subclass of the core's :class:`~titan.core.errors.StateError` rather than
+    a parallel type. The engine catches ``TitanError`` and turns it into a
+    finished sequence with a reason; an adapter error outside that tree escapes
+    the loop's handler and takes the scheduler thread with it, which is one
+    request's problem becoming every request's problem.
+    """
 
 
 @dataclass
 class Snapshot:
-    """A recurrent-state copy staged at a token length."""
+    """A recurrent-state copy staged at a token length.
+
+    ``pinned`` marks the ones a boundary depends on: the prefill chunk ends the
+    plan named, and the prompt end. Those have to survive until the sequence
+    retires and the cache serialises them. Everything else is a verify's own
+    rollback copy, which is dead the moment the next cycle stages its own.
+    """
 
     length: int
     arrays: dict[str, mx.array]
+    pinned: bool = False
 
 
 @dataclass
@@ -70,6 +82,10 @@ class ModelState:
     snapshots: dict[int, Snapshot] = field(default_factory=dict)
     rows: int = 1
     phase: str = PHASE_PREFILL
+    pending_blocks: list = field(default_factory=list)
+    """Cache blocks staged by the codec and not yet applied. A restore stages
+    every block and installs them in one go, so a restore that fails leaves
+    this state empty rather than holding half a prefix."""
     # Left padding per row, in tokens. ``None`` for an unbatched state.
     left_padding: Optional[Sequence[int]] = None
 
@@ -185,11 +201,19 @@ class ModelState:
         )
 
     # -- snapshots ---------------------------------------------------------
-    def stage_snapshot(self, length: Optional[int] = None) -> Snapshot:
+    def stage_snapshot(
+        self, length: Optional[int] = None, *, pinned: bool = False
+    ) -> Snapshot:
         """Copy the recurrent state as it stands, keyed by token length.
 
         Staged, not written.  The store decides whether it reaches disk; the
         state only guarantees that :meth:`truncate` back to this length is exact.
+
+        ``pinned`` is what separates a boundary from a rollback copy.  A verify
+        stages one of these before every forward, so an unpinned snapshot is
+        superseded once the state moves past it; a pinned one is a position the
+        cache will be asked to serialise at retirement and has to survive until
+        then.  See :meth:`prune_snapshots`.
         """
         length = self.length if length is None else length
         arrays: dict[str, mx.array] = {}
@@ -199,7 +223,10 @@ class ModelState:
             for slot, value in enumerate(cache.state or ()):
                 if value is not None:
                     arrays[f"layer{index}.slot{slot}"] = mx.array(value)
-        snapshot = Snapshot(length=length, arrays=arrays)
+        snapshot = Snapshot(length=length, arrays=arrays, pinned=pinned)
+        existing = self.snapshots.get(length)
+        if existing is not None and existing.pinned:
+            snapshot.pinned = True
         self.snapshots[length] = snapshot
         return snapshot
 
@@ -215,42 +242,35 @@ class ModelState:
             for slot in range(len(slots)):
                 key = f"layer{index}.slot{slot}"
                 slots[slot] = snapshot.arrays.get(key)
-            cache.state = tuple(slots)
+            # A list, not a tuple. The vendored cache assigns into this by
+            # index on the next forward (``cache[0] = conv_window``), and a
+            # tuple turns the cycle after a rollback into a TypeError three
+            # layers down in the model.
+            cache.state = slots
 
     def export_snapshot(self, length: int) -> bytes:
-        """Serialise a staged snapshot. Opaque to everything but this module."""
+        """Serialise a staged snapshot. Opaque to everything but this module.
+
+        Through the shared payload container rather than ``numpy.savez``, for
+        two reasons that both bite on this model. The recurrent state is
+        bfloat16, which numpy has no dtype for and mlx will not hand to the
+        buffer protocol, and npz is a zip: deflating 110 MiB of dense floats
+        costs real time on the scheduler thread for a payload the store already
+        checksums.
+        """
         snapshot = self.snapshots.get(length)
         if snapshot is None:
             raise StateError(f"no recurrent snapshot staged at length {length}")
-        buffer = io.BytesIO()
-        payload = {
-            name: np.array(value, copy=False)
-            for name, value in snapshot.arrays.items()
-        }
-        np.savez(buffer, __length__=np.array([length]), **payload)
-        return SNAPSHOT_MAGIC + bytes([SNAPSHOT_VERSION]) + buffer.getvalue()
+        return pack_arrays({"kind": "snapshot", "length": length}, snapshot.arrays)
 
     def import_snapshot(self, length: int, blob: bytes) -> None:
         """Restore recurrent state from :meth:`export_snapshot` bytes."""
-        head = len(SNAPSHOT_MAGIC)
-        if blob[:head] != SNAPSHOT_MAGIC:
-            raise StateError("not a Titan recurrent snapshot")
-        version = blob[head]
-        if version != SNAPSHOT_VERSION:
-            raise StateError(
-                f"snapshot version {version} was written by another build"
-            )
-        with np.load(io.BytesIO(blob[head + 1 :])) as data:
-            stored = int(data["__length__"][0])
-            if stored != length:
-                raise StateError(
-                    f"snapshot covers {stored} tokens, not {length}"
-                )
-            arrays = {
-                name: mx.array(data[name])
-                for name in data.files
-                if name != "__length__"
-            }
+        header, arrays = unpack_arrays(blob)
+        if header.get("kind") != "snapshot":
+            raise StateError(f"not a recurrent snapshot: {header.get('kind')!r}")
+        stored = int(header.get("length", -1))
+        if stored != length:
+            raise StateError(f"snapshot covers {stored} tokens, not {length}")
         self.snapshots[length] = Snapshot(length=length, arrays=arrays)
         self.restore_snapshot(length)
         self.length = length
@@ -284,6 +304,35 @@ class ModelState:
         self.length = length
         for staged in [n for n in self.snapshots if n > length]:
             del self.snapshots[staged]
+
+    def prune_snapshots(self, keep: int) -> int:
+        """Drop every unpinned snapshot except the one at ``keep``.
+
+        A recurrent snapshot is around 110 MiB, and a verify stages one every
+        cycle, so without this a sequence generating 600 tokens would hold 66 GB
+        of rollback copies it can never use again. The one at ``keep`` stays
+        because it is the rollback point of the cycle that just ran, which is
+        what the stop path truncates to.
+
+        Pinned snapshots are the plan's boundaries and are never dropped here.
+        They are the whole reason the prefix cache has anything to write, and
+        they are bounded by the number of chunk ends in a prompt.
+        """
+        doomed = [
+            length
+            for length, snapshot in self.snapshots.items()
+            if not snapshot.pinned and length != keep
+        ]
+        for length in doomed:
+            del self.snapshots[length]
+        return len(doomed)
+
+    def staged_bytes(self) -> int:
+        """Device bytes the staged snapshots hold. For the guard and the log."""
+        return sum(
+            sum(int(a.nbytes) for a in snapshot.arrays.values())
+            for snapshot in self.snapshots.values()
+        )
 
     def drop_snapshots_before(self, length: int) -> None:
         for staged in [n for n in self.snapshots if n < length]:

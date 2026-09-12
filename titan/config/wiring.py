@@ -35,6 +35,9 @@ from titan.config import settings
 from titan.config.schema import TitanConfig
 from titan.core.errors import ConfigError
 
+FINE_CUT_MIN_GAIN_TOKENS = 384
+"""Below this, the prompt-end cut costs more than the recompute it saves."""
+
 __all__ = [
     "Runtime",
     "TitanRuntime",
@@ -211,9 +214,19 @@ def build_registry(config: TitanConfig) -> Any:
 
 
 def build_backend(config: TitanConfig, registry: Any) -> Any:
-    """Load the checkpoint and wrap it. The one call that costs minutes."""
+    """Load the checkpoint and wrap it. The one call that costs minutes.
+
+    Two wrappers, and the order is not cosmetic. ``loader.load_model`` returns
+    the vendored module tree; ``TitanQwenFlashNext`` is the forward API over it,
+    which is what the parity harness drives directly and what the backend
+    forwards to; ``MLXModelBackend`` adds the handle table and the acceptance
+    reduction the engine's port describes. Handing the raw module to the
+    backend gets you an object without ``new_state``, which fails at the first
+    request rather than at startup.
+    """
     from titan.adapters.mlx import loader  # noqa: PLC0415
     from titan.adapters.mlx.backend import MLXModelBackend  # noqa: PLC0415
+    from titan.adapters.mlx.model import TitanQwenFlashNext  # noqa: PLC0415
 
     model, _plan = loader.load_model(
         config.model.path,
@@ -221,7 +234,9 @@ def build_backend(config: TitanConfig, registry: Any) -> Any:
         mtp_depth=config.speculation.mtp_depth_max,
         fuse_gate_up=config.model.fuse_gate_up,
     )
-    return MLXModelBackend(model)
+    return MLXModelBackend(
+        TitanQwenFlashNext(model, prefill_chunk=config.scheduler.prefill_chunk)
+    )
 
 
 def build_tokenizer(config: TitanConfig) -> Any:
@@ -242,20 +257,20 @@ def build_template(config: TitanConfig) -> Any:
     )
 
 
-def build_codec(config: TitanConfig, backend: Any) -> Any:
+def build_codec(config: TitanConfig, backend: Any, signature: Any = None) -> Any:
     """The ``StateCodec`` the store serialises through.
 
-    Owed by the MLX adapter: only the backend knows how a state handle turns
-    into bytes. Until it lands, a runtime is built by passing one through
-    :class:`Parts`.
+    The backend builds it, because only the adapter knows how a state handle
+    turns into bytes, and it needs the signature because the codec is what
+    stamps it into every payload the store writes.
     """
     codec = getattr(backend, "codec", None)
     if codec is not None:
         return codec
     factory = getattr(backend, "state_codec", None)
-    if callable(factory):
-        return factory()
-    raise _owed("titan.adapters.mlx.state", "the state codec")
+    if not callable(factory):
+        raise _owed("titan.adapters.mlx.codec", "the state codec")
+    return factory(signature if signature is not None else build_signature(config, backend))
 
 
 def build_signature(config: TitanConfig, backend: Any) -> Any:
@@ -301,12 +316,17 @@ def build_cache(config: TitanConfig, store: Any, codec: Any) -> Any:
         snapshot_at_prompt_end=c.snapshot_at_prompt_end,
         chunk_tokens=config.scheduler.prefill_chunk,
         contended_chunk_tokens=c.block_tokens,
-        fine_min_gain_tokens=c.fine_tail_blocks * c.block_tokens if c.fine_tail else 1 << 30,
+        # The gate is a measured cost, not a count of blocks: the extra chunk
+        # launch plus the snapshot is about 283 ms, so a fine cut has to buy at
+        # least 384 tokens back to be worth taking. Deriving it from
+        # ``fine_tail_blocks`` put the threshold at 2048 and refused every fine
+        # cut on a prompt shorter than the snapshot grid, which is most of them.
+        fine_min_gain_tokens=FINE_CUT_MIN_GAIN_TOKENS if c.fine_tail else 1 << 30,
         fine_max_pending_bytes=int(c.pending_write_budget_mb * 1024**2),
     )
 
 
-def build_admission_config(config: TitanConfig) -> Any:
+def build_admission_config(config: TitanConfig, backend: Any = None) -> Any:
     """The flat numbers the engine needs, since the engine may not import config."""
     factory = _resolve(
         "titan.engine.admission", "AdmissionConfig", "the admission config"
@@ -321,6 +341,14 @@ def build_admission_config(config: TitanConfig) -> Any:
         memory_guard_gb=config.scheduler.memory_guard_gb
         * config.scheduler.memory_guard_soft_fraction,
     )
+    per_token = getattr(backend, "state_bytes_per_token", None)
+    if per_token:
+        # The backend knows the layer shapes; the default here is a number from
+        # another checkpoint. A guard that overestimates skips a long prompt
+        # rather than refusing it, and a skipped entry keeps its place in the
+        # queue, so the failure is a request that never runs and no error
+        # anywhere.
+        fields["state_bytes_per_token"] = float(per_token)
     if config.model.weights_gb:
         # 0 means the config did not say. Passing it would tell the guard the
         # weights are free, which is worse than letting admission keep its own
@@ -368,7 +396,7 @@ def build_engine(
         backend=backend,
         tokenizer=tokenizer,
         cycle=cycle,
-        config=build_admission_config(config),
+        config=build_admission_config(config, backend),
         cache=cache,
         profiler=profiler,
         rows_budget=config.scheduler.decode_rows_budget,
@@ -377,7 +405,12 @@ def build_engine(
 
 
 def build_app(
-    config: TitanConfig, *, engine: Any, tokenizer: Any, template: Any
+    config: TitanConfig,
+    *,
+    engine: Any,
+    tokenizer: Any,
+    template: Any,
+    profiler: Any = None,
 ) -> Any:
     """The FastAPI application, against the API's projection of the config."""
     from titan.api.openai import ChatDeps, build_app as _build  # noqa: PLC0415
@@ -388,6 +421,8 @@ def build_app(
             engine=engine,
             renderer=template,
             tokenizer=tokenizer,
+            profiler=profiler,
+            resolved_config=resolved_config_view(config),
         )
     )
 
@@ -409,8 +444,9 @@ def build_runtime(config: TitanConfig, parts: Parts | None = None) -> TitanRunti
     backend = parts.backend or build_backend(config, registry)
     tokenizer = parts.tokenizer or build_tokenizer(config)
     template = parts.template or build_template(config)
-    codec = parts.codec or build_codec(config, backend)
-    store = parts.store or build_store(config, build_signature(config, backend))
+    signature = None if parts.codec and parts.store else build_signature(config, backend)
+    codec = parts.codec or build_codec(config, backend, signature)
+    store = parts.store or build_store(config, signature)
     cache = parts.cache or build_cache(config, store, codec)
     engine = parts.engine or build_engine(
         config,
@@ -421,7 +457,11 @@ def build_runtime(config: TitanConfig, parts: Parts | None = None) -> TitanRunti
         cycle=parts.cycle,
     )
     app = parts.app or build_app(
-        config, engine=engine, tokenizer=tokenizer, template=template
+        config,
+        engine=engine,
+        tokenizer=tokenizer,
+        template=template,
+        profiler=profiler,
     )
     return TitanRuntime(
         config=config,

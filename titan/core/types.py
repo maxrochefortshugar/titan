@@ -225,6 +225,16 @@ class SequenceState:
     finish_reason: FinishReason | None = None
     admitted_at: float = 0.0
     first_token_at: float | None = None
+    needs_prompt_end_snapshot: bool = False
+    """Set by the scheduler when the prefill plan cannot reach the prompt end.
+
+    Prefill covers ``prompt_len - 1`` tokens, because the last prompt token is
+    the first decode input, so the deepest boundary it can stage is the block
+    floor of that. When the block floor of ``prompt_len`` sits above it, the
+    boundary a follow-up turn would resume from does not exist yet, and the
+    first decode cycle is the only place that can put it there."""
+    prompt_end_staged: bool = False
+    """Whether a recurrent snapshot now sits at exactly ``prompt_len`` tokens."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +256,13 @@ class PrefixMatch:
     snapshot_id: str | None
     tier: str
     """"ram" or "ssd". Observability only; the core does not branch on it."""
+    recompute_tokens: int = 0
+    """Tokens of the prompt the match does not cover, known before a byte is
+    read. Defaulted because a lookup that has not measured it says nothing
+    rather than claiming zero recompute."""
+    blocks_matched: int = 0
+    """Full blocks the forward walk reached. The distance between this and
+    ``matched_tokens`` is the KV the snapshot policy could not use."""
 
 
 @dataclass(frozen=True, slots=True)

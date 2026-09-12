@@ -66,6 +66,7 @@ feeds ``plan_chunks``.
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -76,6 +77,8 @@ from titan.core.types import BlockHash, PrefixMatch, StateHandle
 from titan.adapters.cache.codec import StateCodec
 from titan.adapters.cache.format import chain_hash, snapshot_id_for
 from titan.adapters.cache.store import TwoTierStateStore
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["PrefixLease", "PrefixStats", "BlockPrefixCache"]
 
@@ -381,7 +384,8 @@ class BlockPrefixCache:
                         state, start, start + self._block, payloads[index]
                     )
                 self._codec.import_snapshot(state, snapshot_length, snapshot_blob)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - degrade, never raise
+                logger.warning("restore aborted at %d: %s", snapshot_length, exc)
                 self.counters.restore_aborted += 1
                 return 0
 
@@ -432,7 +436,12 @@ class BlockPrefixCache:
                 started = self._clock()
                 try:
                     blob = self._codec.export_snapshot(state, length)
-                except Exception:
+                except Exception as exc:  # noqa: BLE001 - a boundary, not a turn
+                    # Counted and logged. A dropped boundary is the difference
+                    # between a warm next turn and a cold one, so a silent
+                    # count leaves nobody able to say which of the three
+                    # reasons it was.
+                    logger.warning("snapshot at %d did not commit: %s", length, exc)
                     self.counters.snapshots_failed += 1
                     continue
                 self._store.put_snapshot(snapshot_id, blob)
@@ -466,7 +475,13 @@ class BlockPrefixCache:
                     payload = self._codec.export_blocks(
                         state, start, start + self._block
                     )
-                except Exception:
+                except Exception as exc:  # noqa: BLE001 - the chain, not a turn
+                    logger.warning(
+                        "block [%d, %d) did not export: %s",
+                        start,
+                        start + self._block,
+                        exc,
+                    )
                     self.counters.chain_truncations += 1
                     break
                 self._store.put_block(BlockHash(digest), payload)

@@ -269,6 +269,7 @@ def _op_modules():
         ple_packed_lookup,
         qsa_gathered_attention,
         topk_radix,
+        verify_accept,
     )
 
     return (
@@ -281,6 +282,7 @@ def _op_modules():
         grouped_rmsnorm_bf16,
         topk_radix,
         ple_packed_lookup,
+        verify_accept,
         qsa_gathered_attention,
     )
 

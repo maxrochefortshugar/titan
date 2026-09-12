@@ -131,12 +131,16 @@ def plan_chunks(
 ) -> tuple[int, ...]:
     """Chunk end positions for the uncached suffix ``[matched, total)``.
 
-    Three properties, in the order they constrain the answer:
+    Four properties, in the order they constrain the answer:
 
     1. no chunk is longer than ``chunk`` tokens;
     2. no chunk steps over a snapshot-grid multiple, so every grid multiple
        strictly inside the suffix is itself a chunk end and stages a snapshot;
-    3. an end that is not the last one is clamped down to the block grid, so a
+    3. the prompt end rounded down to the block grid is a chunk end of its own,
+       because that is where the terminal snapshot has to sit: a restore point
+       must be a block end, and a snapshot staged at an unaligned prompt end
+       would be rounded away by the store and dropped;
+    4. an end that is not one of those is clamped down to the block grid, so a
        stored block never straddles a chunk boundary.
 
     The last end is ``total`` whatever the grids say, which is the boundary
@@ -146,11 +150,14 @@ def plan_chunks(
         raise ValueError(f"bad suffix: matched={matched} total={total}")
     if chunk <= 0 or block <= 0 or grid <= 0:
         raise ValueError("chunk, block and grid must be positive")
+    fine = (total // block) * block
     ends: list[int] = []
     position = matched
     while position < total:
         next_grid = (position // grid + 1) * grid
         end = min(position + chunk, next_grid, total)
+        if position < fine < end:
+            end = fine
         if end < total:
             aligned = (end // block) * block
             if aligned > position:
@@ -163,20 +170,37 @@ def plan_chunks(
 
 
 def snapshot_positions(
-    ends: Sequence[int], *, grid: int = 2048, prompt_end: bool = True
+    ends: Sequence[int],
+    *,
+    grid: int = 2048,
+    block: int = 512,
+    prompt_end: bool = True,
 ) -> tuple[int, ...]:
     """Which chunk ends stage a recurrent snapshot.
 
-    The grid multiples, plus the last end. The last one is the cheap one and
-    the valuable one: the final chunk stops there anyway, so it costs a write
-    and no forward pass, and it is the boundary that stops a six-turn
-    conversation recomputing 11,617 tokens it has already seen.
+    The grid multiples, plus the prompt end rounded down to the block grid.
+    That last one is the cheap one and the valuable one: the chunk planner
+    already stops there, so it costs a write and no forward pass, and it is the
+    boundary that stops a six-turn conversation recomputing 11,617 tokens it
+    has already seen.
+
+    Rounding down is what makes it legal rather than merely useful. A restore
+    point has to be a block end, because the KV either covers whole blocks or
+    the chain hash of every block after it changes, so a snapshot staged at an
+    unaligned prompt end is a snapshot the store rounds away and drops. The
+    tokens past the block floor are recomputed next turn, which is a far better
+    trade than falling back to the previous grid multiple.
     """
     if not ends:
         return ()
     at = [end for end in ends if end % grid == 0]
-    if prompt_end and ends[-1] not in at:
-        at.append(ends[-1])
+    if prompt_end:
+        fine = (ends[-1] // block) * block
+        # Only a chunk end can stage a snapshot: the backend stages at the end
+        # of a forward and nowhere else. The planner puts a cut at this exact
+        # position, so this is a check rather than a hope.
+        if fine and fine in set(ends) and fine not in at:
+            at.append(fine)
     return tuple(sorted(set(at)))
 
 
@@ -334,8 +358,43 @@ class PortAdmitter:
             request=request,
             match=match,
             chunk_ends=ends,
-            snapshot_at=snapshot_positions(ends, grid=self.config.snapshot_grid),
+            snapshot_at=self._snapshot_at(matched, prefill_end, ends),
             estimated_gb=self.guard.estimate_gb(request),
+        )
+
+    def _snapshot_at(
+        self, matched: int, prefill_end: int, ends: Sequence[int]
+    ) -> tuple[int, ...]:
+        """Where snapshots are staged. The cache decides when there is one.
+
+        The cache owns the snapshot policy because it owns the grids and it is
+        the only party that knows what the write backlog costs right now; the
+        local planner is what answers when there is no cache or the cache
+        raises. Either answer is filtered to positions that actually end a
+        chunk, because the backend can only stage a snapshot at the end of a
+        forward, and a boundary staged nowhere is a boundary the store drops.
+        """
+        if self.cache is not None:
+            try:
+                asked = tuple(
+                    int(b)
+                    for b in self.cache.snapshot_boundaries(matched, prefill_end, False)
+                )
+            except Exception as exc:  # noqa: BLE001 - a cache fault is not fatal
+                self._event("snapshot_plan_failed", reason=str(exc))
+            else:
+                usable = tuple(sorted({b for b in asked if b in set(ends)}))
+                if len(usable) != len(set(asked)):
+                    self._event(
+                        "snapshot_boundaries_dropped",
+                        asked=len(set(asked)),
+                        usable=len(usable),
+                    )
+                return usable
+        return snapshot_positions(
+            ends,
+            grid=self.config.snapshot_grid,
+            block=self.config.block_tokens,
         )
 
     def _chunk_ends(self, matched: int, prefill_end: int) -> tuple[int, ...]:

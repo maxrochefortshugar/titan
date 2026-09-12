@@ -177,6 +177,20 @@ class ModelBackend(Protocol):
            and padding may not affect their own outputs.
         """
 
+    def stage_snapshot(self, state: StateHandle, length: int) -> None:
+        """Stage a recurrent-state snapshot at the state's current length.
+
+        Prefill stages its own through :meth:`prefill`, and verify stages one
+        before every forward so a rejected draft can be rolled back. This is
+        the one boundary neither of those reaches: the end of the prompt.
+        Prefill stops one token short of it, because the last prompt token is
+        the first decode input, so the position exists only after the first
+        decode cycle has consumed it.
+
+        Raises if ``length`` is not what the state currently covers: a snapshot
+        keyed to a length it does not describe is worse than no snapshot.
+        """
+
     def export_snapshot(self, state: StateHandle, length: int) -> bytes:
         """Serialise the recurrent state staged at ``length``.
 
@@ -271,11 +285,38 @@ class PrefixCache(Protocol):
     ) -> None:
         """Persist ``tokens`` with resumable points at ``boundaries``.
 
-        ``boundaries`` must be ascending, must end at ``len(tokens)`` and each
-        must be a position at which :meth:`ModelBackend.export_snapshot`
-        succeeds. Store is all-or-nothing per boundary: a boundary whose
-        snapshot did not commit is dropped, and the chain truncates there rather
-        than recording a length it cannot restore.
+        ``boundaries`` is ascending, and boundaries are rounded down to the
+        block grid; a boundary with no staged snapshot is dropped. Store is
+        all-or-nothing per boundary, and the chain truncates at the deepest one
+        that committed rather than recording a length it cannot restore.
+        """
+
+    def reserve(self, match: PrefixMatch) -> Any:
+        """Pin a match's blocks and snapshot against eviction. Returns a lease.
+
+        Called before :meth:`restore`, which is the whole point: the pin is what
+        stops a request arriving one millisecond later from evicting blocks this
+        one is halfway through reading.
+        """
+
+    def release(self, lease: Any) -> None:
+        """Drop a lease. Idempotent, and required on every exit path including
+        aborts: a lease that is never released pins its prefix for the life of
+        the process."""
+
+    def snapshot_boundaries(
+        self,
+        matched: int,
+        total: int,
+        contended: bool = False,
+    ) -> tuple[int, ...]:
+        """Where the backend should stage a recurrent snapshot for this prompt.
+
+        The snapshot grid multiples strictly inside the suffix, plus the prompt
+        end rounded down to the block grid when the cache judges that cut worth
+        its write. Chunk ends that are neither are excluded on purpose: a
+        snapshot is around 110 MiB, and emitting one at every chunk end
+        quadruples the rate on the contended path that shortened the chunks.
         """
 
     def plan_chunks(
@@ -296,6 +337,7 @@ class PrefixCache(Protocol):
         """Hit rate, restored tokens, recomputed tokens, evictions."""
 
 
+@runtime_checkable
 @runtime_checkable
 class Tokenizer(Protocol):
     """Text to ids and back, with streaming-safe detokenisation.
@@ -340,7 +382,16 @@ class TemplateRenderer(Protocol):
         *,
         reasoning_effort: str,
         add_generation_prompt: bool = True,
-    ) -> str: ...
+        enable_thinking: bool = True,
+        template_kwargs: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Render one turn into the prompt string.
+
+        ``enable_thinking`` is a field of its own rather than a template kwarg
+        because the alias profiles set it and a kwarg that shadowed it would
+        silently win. ``template_kwargs`` carries whatever else the request
+        asked for, merged over the profile's own kwargs.
+        """
 
     def reasoning_markers(self) -> tuple[str, str]:
         """Open and close markers for the thinking channel."""

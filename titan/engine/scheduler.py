@@ -478,6 +478,23 @@ class EngineLoop:
             cached_tokens=sequence.restored_from,
             chunks=len(plan.chunk_ends),
         )
+        # The prompt-end boundary the prefill plan cannot reach. Prefill stops
+        # one token short of the prompt, so its deepest snapshot is the block
+        # floor of ``prompt_len - 1``. When the prompt length is itself a block
+        # multiple, that floor is a whole block short of the prompt end, and
+        # the first decode cycle is the only place the missing one can be
+        # staged: it is the cycle that consumes the last prompt token, and it
+        # lands the state exactly on the block boundary.
+        #
+        # Only then. A restore point has to be a block end, so the store rounds
+        # every boundary down to the grid, and a snapshot staged at an
+        # unaligned prompt end is one the store looks for at the rounded
+        # position, does not find, and drops.
+        block = self.config.block_tokens
+        aligned = sequence.prompt_len > 0 and sequence.prompt_len % block == 0
+        sequence.needs_prompt_end_snapshot = aligned and sequence.prompt_len not in set(
+            plan.snapshot_at
+        )
         if not plan.chunk_ends:
             # Everything the prefill would have covered is already in the state:
             # a one-token prompt, or a full cache hit on the prefill prefix.
@@ -642,7 +659,16 @@ class EngineLoop:
         if covered <= 0:
             return
         try:
-            if self.backend.state_length(sequence.state) != covered:
+            # What the state actually backs, which is not always the token list.
+            # A stop string that reached back into a closed block leaves the
+            # state longer than the sequence, and a truncation the backend
+            # refused leaves it longer still. Neither makes the earlier blocks
+            # wrong: block N is the KV for the same token ids either way. So the
+            # offer is trimmed to what the state covers rather than dropped,
+            # which is the difference between caching a turn that ended on EOS
+            # and caching none of them.
+            covered = min(covered, self.backend.state_length(sequence.state))
+            if covered <= 0:
                 self.profiler.event(
                     "store_skipped",
                     sequence=int(sequence.sequence_id),
@@ -650,9 +676,17 @@ class EngineLoop:
                 )
                 return
             plan = self._plans.get(int(sequence.sequence_id))
-            boundaries = tuple(b for b in (plan.snapshot_at if plan else ()) if b <= covered)
-            if not boundaries or boundaries[-1] != covered:
-                boundaries = (*boundaries, covered)
+            offered = set(plan.snapshot_at if plan else ())
+            if sequence.prompt_end_staged:
+                # The one boundary prefill could not reach. The first decode
+                # cycle staged it, and it is what lets the next turn of a
+                # conversation resume at the end of the prompt this one sent.
+                offered.add(sequence.prompt_len)
+            # Only boundaries something actually staged. The old habit of
+            # appending the covered length offered the cache a position no
+            # snapshot sits at, which the store rounds down, fails to export
+            # and counts as a truncated chain: work and a counter for nothing.
+            boundaries = tuple(sorted(b for b in offered if 0 < b <= covered))
             self.cache.store(sequence.tokens[:covered], sequence.state, boundaries)
         except Exception as exc:  # noqa: BLE001 - a store fault never kills a turn
             self.profiler.event(

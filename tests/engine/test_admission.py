@@ -32,17 +32,20 @@ from tests.engine.conftest import FakeCache, FakeClock, make_request
 @pytest.mark.parametrize(
     "matched,total,expected",
     [
-        (0, 600, (600,)),
+        (0, 600, (512, 600)),
         (0, 2048, (2048,)),
-        (0, 2600, (2048, 2600)),
-        (0, 5000, (2048, 4096, 5000)),
-        (100, 5000, (2048, 4096, 5000)),
-        (2100, 5000, (4096, 5000)),
+        (0, 2600, (2048, 2560, 2600)),
+        (0, 5000, (2048, 4096, 4608, 5000)),
+        (100, 5000, (2048, 4096, 4608, 5000)),
+        (2100, 5000, (4096, 4608, 5000)),
         (4096, 4096, ()),
         (0, 4096, (2048, 4096)),
     ],
 )
 def test_chunks_stop_on_the_grid(matched, total, expected):
+    """Grid multiples end a chunk, and so does the block floor of the prompt
+    end: that is where the terminal snapshot has to sit, because a restore
+    point is a block end and the store rounds an unaligned one away."""
     assert plan_chunks(matched, total) == expected
 
 
@@ -68,16 +71,25 @@ def test_every_grid_multiple_inside_the_suffix_ends_a_chunk(matched, total):
 
 def test_ends_that_are_not_the_last_sit_on_the_block_grid():
     ends = plan_chunks(0, 5000, chunk=1024, block=512, grid=2048)
-    assert ends == (1024, 2048, 3072, 4096, 5000)
+    assert ends == (1024, 2048, 3072, 4096, 4608, 5000)
     for end in ends[:-1]:
         assert end % 512 == 0
 
 
-def test_snapshots_land_on_the_grid_and_at_the_prompt_end():
+def test_snapshots_land_on_the_grid_and_at_the_block_floor_of_the_prompt_end():
     ends = plan_chunks(0, 5000)
-    assert snapshot_positions(ends) == (2048, 4096, 5000)
-    assert snapshot_positions((600,)) == (600,)
+    assert snapshot_positions(ends) == (2048, 4096, 4608)
+    assert snapshot_positions(plan_chunks(0, 600)) == (512,)
     assert snapshot_positions(()) == ()
+
+
+def test_an_unaligned_last_end_never_becomes_a_snapshot_position():
+    """Only a chunk end can stage one, and only a block end can be restored
+    from, so a planner that offered neither gets nothing rather than a boundary
+    the store would drop."""
+    assert snapshot_positions((600,)) == ()
+    assert snapshot_positions((512, 600)) == (512,)
+    assert snapshot_positions((2048,)) == (2048,)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +204,7 @@ def test_the_plan_covers_the_prompt_but_the_last_token(backend, clock):
     admitter = PortAdmitter(backend=backend, config=config, clock=clock)
     plan = admitter.plan(make_request(tuple(range(5000)), max_tokens=10))
     assert plan.chunk_ends[-1] == 4999
-    assert plan.snapshot_at == (2048, 4096, 4999)
+    assert plan.snapshot_at == (2048, 4096, 4608)
 
 
 def test_a_cache_hit_shortens_the_plan_and_is_reported(backend, clock):
@@ -201,7 +213,7 @@ def test_a_cache_hit_shortens_the_plan_and_is_reported(backend, clock):
     admitter = PortAdmitter(backend=backend, config=config, cache=cache, clock=clock)
     plan = admitter.plan(make_request(tuple(range(5000)), max_tokens=10))
     assert plan.match.matched_tokens == 2048
-    assert plan.chunk_ends == (4096, 4999)
+    assert plan.chunk_ends == (4096, 4608, 4999)
     sequence = admitter.start(plan)
     assert sequence.restored_from == 2048
     assert sequence.prefill_position == 2048
@@ -218,7 +230,7 @@ def test_a_cache_plan_that_breaks_the_grid_rule_is_replaced(backend, clock):
     config = AdmissionConfig()
     admitter = PortAdmitter(backend=backend, config=config, cache=BadCache(), clock=clock)
     plan = admitter.plan(make_request(tuple(range(5000)), max_tokens=10))
-    assert plan.chunk_ends == (2048, 4096, 4999)
+    assert plan.chunk_ends == (2048, 4096, 4608, 4999)
 
 
 def test_a_prompt_longer_than_the_window_is_refused(backend, clock):
@@ -243,3 +255,57 @@ def test_a_failed_restore_degrades_to_a_cold_prefill(backend, clock):
     sequence = admitter.start(admitter.plan(make_request(tuple(range(5000)))))
     assert sequence.restored_from == 0
     assert sequence.prefill_position == 0
+
+
+# ---------------------------------------------------------------------------
+# where the snapshot boundaries come from
+# ---------------------------------------------------------------------------
+
+
+def test_the_cache_owns_the_snapshot_policy(backend, clock):
+    """The cache knows the grids and the write backlog, so it decides. The
+    admitter asks it with the same suffix it planned chunks for."""
+    config = AdmissionConfig()
+    cache = FakeCache(matched=2048, config=config)
+    admitter = PortAdmitter(backend=backend, config=config, cache=cache, clock=clock)
+    plan = admitter.plan(make_request(tuple(range(5000)), max_tokens=10))
+    assert cache.boundary_calls == [(2048, 4999, False)]
+    assert plan.snapshot_at == (4096, 4608)
+
+
+def test_a_boundary_that_ends_no_chunk_is_dropped(backend, clock):
+    """The backend stages a snapshot at the end of a forward and nowhere else,
+    so a boundary in the middle of a chunk is one the store would drop."""
+
+    class OffGridCache(FakeCache):
+        def snapshot_boundaries(self, matched, total, contended=False):
+            return (2048, 3000, 4608)
+
+    config = AdmissionConfig()
+    admitter = PortAdmitter(
+        backend=backend, config=config, cache=OffGridCache(), clock=clock
+    )
+    plan = admitter.plan(make_request(tuple(range(5000)), max_tokens=10))
+    assert plan.snapshot_at == (2048, 4608)
+
+
+def test_a_cache_that_raises_falls_back_to_the_local_policy(backend, clock):
+    class AngryCache(FakeCache):
+        def snapshot_boundaries(self, matched, total, contended=False):
+            raise RuntimeError("index is rebuilding")
+
+    config = AdmissionConfig()
+    admitter = PortAdmitter(
+        backend=backend, config=config, cache=AngryCache(), clock=clock
+    )
+    plan = admitter.plan(make_request(tuple(range(5000)), max_tokens=10))
+    assert plan.snapshot_at == (2048, 4096, 4608)
+
+
+@pytest.mark.parametrize("total", [600, 2049, 5000, 12345, 65536])
+def test_every_snapshot_position_ends_a_chunk_and_sits_on_the_block_grid(total):
+    ends = plan_chunks(0, total)
+    at = snapshot_positions(ends)
+    for position in at:
+        assert position in ends
+        assert position % 512 == 0

@@ -86,12 +86,30 @@ def test_build_runtime_validates_first(fake_parts):
 
 
 def test_a_missing_component_names_the_module_that_owes_it(fake_parts):
-    """The state codec is still owed, so building without one says by whom."""
+    """A backend that cannot say how a state becomes bytes says so by name,
+    rather than failing with an ImportError three layers down."""
     from titan.config.wiring import Parts
 
     parts = Parts(**{**vars(fake_parts), "codec": None})
-    with pytest.raises(NotImplementedError, match="titan.adapters.mlx.state"):
+    with pytest.raises(NotImplementedError, match="titan.adapters.mlx.backend"):
         wiring.build_runtime(TitanConfig.from_toml(MINIMAL), parts)
+
+
+def test_the_codec_comes_from_the_backend_and_carries_the_signature(fake_parts):
+    """Only the adapter knows how a state handle turns into bytes, and the
+    signature is what stops one build reading another's payloads."""
+
+    class Backend:
+        layer_layout = ("gdn", "qsa")
+
+        def state_codec(self, signature):
+            return ("codec", signature)
+
+    config = TitanConfig.from_toml(MINIMAL)
+    kind, signature = wiring.build_codec(config, Backend())
+    assert kind == "codec"
+    assert signature.layer_layout == ("gdn", "qsa")
+    assert signature.block_tokens == 512
 
 
 def test_a_backend_without_a_layer_layout_is_named(fake_parts):
@@ -132,9 +150,16 @@ def test_the_decode_cycle_follows_the_speculation_switch():
     assert isinstance(wiring.build_cycle(off, **args), PlainDecodeCycle)
 
 
-def test_the_profiler_stub_names_its_module():
-    with pytest.raises(NotImplementedError, match="titan.observability.profiler"):
-        wiring.build_profiler(TitanConfig.from_toml(MINIMAL))
+def test_the_profiler_is_real_and_follows_the_config():
+    from titan.observability.profiler import NullProfiler, RingProfiler
+
+    on = wiring.build_profiler(TitanConfig.from_toml(MINIMAL))
+    assert isinstance(on, RingProfiler)
+    assert on.snapshot()["counters"] == {}
+    off = wiring.build_profiler(
+        TitanConfig.from_toml(MINIMAL + "\n[observability]\ncycle_profile = false\n")
+    )
+    assert isinstance(off, NullProfiler)
 
 
 def test_the_kernel_registry_is_real_and_honours_the_config():
@@ -211,3 +236,18 @@ def test_a_missing_file_is_a_config_error(tmp_path):
 def test_the_resolved_config_view_is_redacted():
     view = wiring.resolved_config_view(TitanConfig.from_toml(FULL))
     assert view["server"]["api_key_file"] == "***redacted***"
+
+
+def test_the_guard_takes_the_per_token_cost_from_the_backend():
+    """The default is a number from another checkpoint, and a guard that
+    overestimates does not fail loudly: it skips the long prompt, which keeps
+    its place in the queue and never runs."""
+
+    class Backend:
+        layer_layout = ("gdn", "qsa")
+        state_bytes_per_token = 28_000.0
+
+    config = TitanConfig.from_toml(MINIMAL)
+    assert wiring.build_admission_config(config).state_bytes_per_token == 320_000.0
+    admission = wiring.build_admission_config(config, Backend())
+    assert admission.state_bytes_per_token == 28_000.0

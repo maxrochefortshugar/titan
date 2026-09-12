@@ -63,6 +63,21 @@ class PrefillResult:
     length: int
 
 
+@dataclass
+class VerifyResult:
+    """What a verify forward produced, including what a rollback needs.
+
+    ``gdn_states`` is the per-layer intermediate the Gated DeltaNet arm keeps
+    while it runs a block, and it is the whole reason rollback needs no replay:
+    the recurrent state at any position inside the block can be rebuilt from
+    it. The vendored ``rollback_speculative_cache`` is what consumes it, and it
+    is only populated when the forward ran with the capture on.
+    """
+
+    logits: mx.array
+    gdn_states: Optional[list]
+
+
 class TitanQwenFlashNext:
     """Titan's handle on the vendored Qwen3.8-Flash-Next model.
 
@@ -95,6 +110,50 @@ class TitanQwenFlashNext:
             return 0
         return int(getattr(self.language_model, "_titan_mtp_depth", 1))
 
+    @property
+    def layer_layout(self) -> tuple[str, ...]:
+        """The per-layer cache kind, in layer order.
+
+        Three kinds, because three shapes of bytes: ``qsa`` for the sparse
+        attention layers that carry sliceable KV, ``gdn`` for the recurrent
+        layers that carry two slots, and ``gdn+ple`` for the recurrent layers
+        that also carry the n-gram token history and therefore four. The cache
+        signature hashes this, so a build that moves one layer makes every
+        stored byte unreachable rather than making it wrong.
+        """
+        ple = set(getattr(self.args, "ple_layer_ids", ()) or ())
+        layout: list[str] = []
+        for index, kind in enumerate(self.args.layer_types):
+            if kind == "linear_attention":
+                layout.append("gdn+ple" if index in ple else "gdn")
+            else:
+                layout.append("qsa")
+        return tuple(layout)
+
+    @property
+    def state_bytes_per_token(self) -> float:
+        """Device bytes one more token of context costs, from the shapes.
+
+        Only the 12 sparse-attention layers scale with context: two tensors of
+        ``kv_heads x head_dim`` each, plus the indexer's raw key and its
+        position id. The 36 recurrent layers do not, whatever the context
+        length, which is the entire reason this model is worth serving at 64k.
+
+        Computed rather than assumed. The guard's own default is an order of
+        magnitude above this on this checkpoint, and a guard that overestimates
+        does not fail loudly: it skips the long prompt, keeps its place in the
+        queue, and serves everything behind it forever.
+        """
+        args = self.args
+        kv_bytes = 2 if args.num_key_value_heads else 2
+        qsa_layers = sum(1 for k in args.layer_types if k != "linear_attention")
+        per_layer = (
+            2 * args.num_key_value_heads * args.head_dim * kv_bytes
+            + args.indexer_kv_heads * args.indexer_head_dim * 2
+            + 4
+        )
+        return float(qsa_layers * per_layer)
+
     def new_state(self) -> ModelState:
         return ModelState.new(self.model)
 
@@ -115,6 +174,13 @@ class TitanQwenFlashNext:
         is what the guard sizes for.  ``want_logits`` is honoured for the final
         position of the final chunk only; skipping the head elsewhere is worth
         48-95 ms per chunk on this model.
+
+        ``want_hidden`` is a trap and the backend never sets it.  Asking the
+        vendored model for hidden states sets ``capture_layer_ids``, which is
+        what turns on its ``target_verify`` arm, and that arm runs one kernel
+        launch per token: it is built for a verify block a few columns wide.
+        Over a prefill chunk it is three orders of magnitude slower, measured
+        at 200 seconds for a 150-token chunk against 0.1 seconds without.
         """
         if state.is_batched:
             raise StateError("prefill runs one sequence per turn")
@@ -147,6 +213,14 @@ class TitanQwenFlashNext:
                 hidden = _first_hidden(output) if want_hidden else None
             if snapshot_every and state.length % snapshot_every == 0:
                 state.stage_snapshot()
+            # Evaluate the chunk before starting the next one. MLX is lazy, so
+            # without this the whole prompt is one unevaluated graph: it holds
+            # every intermediate live at once, the guard reads an active-memory
+            # figure that has not happened yet, and the entire prefill is billed
+            # to whatever forces the first evaluation, which is the first decode
+            # cycle. A 65k prompt showed up as a single 90-second decode cycle.
+            # The work is the same work; this is where it belongs.
+            mx.eval(_cache_arrays(state))
             start = stop
         if hidden is not None:
             state.mtp_hidden = hidden
@@ -183,14 +257,23 @@ class TitanQwenFlashNext:
         tokens: Sequence[Sequence[int]] | mx.array,
         state: ModelState,
         *,
-        snapshot: bool = True,
+        snapshot: bool = False,
         want_hidden: bool = True,
-    ) -> mx.array:
-        """Target forward over a drafted block. Returns ``[B, M, vocab]``.
+    ) -> VerifyResult:
+        """Target forward over a drafted block. Logits are ``[B, M, vocab]``.
 
-        A verify is the only call that can be rolled back, so it stages the
-        recurrent snapshot first: the 36 GDN layers have no inverse, and a
-        rejected draft must leave no trace.
+        The forward captures the Gated DeltaNet intermediates, which is what
+        makes rollback replay-free: the recurrent state at any position inside
+        the block can be rebuilt from them, so a rejected draft costs a rebuild
+        rather than a second forward. ``capture_layer_ids`` is what turns the
+        capture on in the vendored code, and asking for the hidden state is
+        what sets it, so a verify that wants rollback wants the hidden state.
+
+        ``snapshot`` is the older, coarser path: a full copy of the recurrent
+        state before the forward, restored wholesale. It costs around 110 MiB
+        of copies per cycle, so it is off by default and the caller turns it on
+        only when it has something to roll back to that the capture cannot
+        rebuild.
         """
         ids = _as_rows(tokens)
         if ids.shape[0] != state.rows:
@@ -203,13 +286,33 @@ class TitanQwenFlashNext:
         output = self.language_model(
             ids,
             cache=state.layers,
-            target_verify=True,
-            return_hidden=want_hidden,
+            return_hidden=True,
         )
         state.length += ids.shape[1]
         if want_hidden:
             state.mtp_hidden = _first_hidden(output)
-        return output.logits
+        return VerifyResult(
+            logits=output.logits, gdn_states=getattr(output, "gdn_states", None)
+        )
+
+    def rollback_verify(
+        self, state: ModelState, gdn_states: Optional[list], accepted, width: int
+    ) -> None:
+        """Undo the rejected tail of a verify block, without a forward pass.
+
+        The 12 attention layers trim by an offset move. The 36 recurrent layers
+        are rebuilt at the accepted position from the intermediates the forward
+        captured, which is the vendored model's own
+        ``rollback_speculative_cache``. Nothing is recomputed and nothing is
+        replayed, which is what the whole speculative path is worth.
+        """
+        rollback = getattr(self.language_model, "rollback_speculative_cache", None)
+        if rollback is None or not gdn_states:
+            raise StateError(
+                "this build cannot roll back a verify block: the forward "
+                "captured no recurrent intermediates"
+            )
+        rollback(state.layers, gdn_states, accepted, width)
 
     def mtp_draft(
         self,
@@ -284,6 +387,19 @@ def _as_rows(tokens) -> mx.array:
     if rows and isinstance(rows[0], (list, tuple)):
         return mx.array([list(r) for r in rows], dtype=mx.int64)
     return mx.array([[int(t)] for t in rows], dtype=mx.int64)
+
+
+def _cache_arrays(state: ModelState) -> list:
+    """Every live array behind a state's caches, for a forced evaluation."""
+    arrays: list = []
+    for cache in list(state.layers) + list(state.mtp_layers):
+        held = getattr(cache, "state", None)
+        if held is None:
+            continue
+        for value in held if isinstance(held, (list, tuple)) else (held,):
+            if isinstance(value, mx.array):
+                arrays.append(value)
+    return arrays
 
 
 def _first_hidden(output) -> Optional[mx.array]:

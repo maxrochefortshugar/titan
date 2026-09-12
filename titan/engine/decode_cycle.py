@@ -649,6 +649,67 @@ class _BaseCycle:
                 finished.append(sequence.sequence_id)
         return events, finished, committed_total
 
+    def stage_prompt_end(self, sequence: SequenceState) -> None:
+        """Stage the recurrent snapshot at the end of the prompt, once.
+
+        Prefill covers ``prompt_len - 1`` tokens, because the last prompt token
+        is the first decode input, so the deepest boundary prefill can stage is
+        the block floor of that. The end of the prompt itself exists only after
+        the first decode cycle has consumed the pending token, and it is the
+        boundary that decides whether the next turn of a conversation resumes
+        where this one started or a block earlier. Staging it costs one copy of
+        the recurrent state and no forward pass.
+
+        The check is on the state length rather than on a cycle counter,
+        because it is the state that has to be at the boundary: a first cycle
+        that committed two tokens has already passed it, and staging there
+        would key a snapshot to a length it does not describe.
+        """
+        if not sequence.needs_prompt_end_snapshot or sequence.state is None:
+            return
+        stage = getattr(self.backend, "stage_snapshot", None)
+        if stage is None:
+            return
+        if self.backend.state_length(sequence.state) != sequence.prompt_len:
+            return
+        try:
+            stage(sequence.state, sequence.prompt_len)
+        except TitanError as exc:
+            self.profiler.event(
+                "prompt_end_snapshot_failed",
+                sequence=int(sequence.sequence_id),
+                length=sequence.prompt_len,
+                reason=str(exc),
+            )
+            return
+        sequence.needs_prompt_end_snapshot = False
+        sequence.prompt_end_staged = True
+        self.profiler.event(
+            "prompt_end_snapshot",
+            sequence=int(sequence.sequence_id),
+            length=sequence.prompt_len,
+        )
+
+    def first_cycle_depth(self, sequence: SequenceState) -> int:
+        """Drafts this sequence may spend on the cycle that ends its prompt.
+
+        Zero, once, for the cycle that consumes the last prompt token, and only
+        when the prefill plan could not reach the prompt end itself. A verify
+        block wider than one column lands the state past that boundary, and the
+        boundary is then unreachable without a forward pass to put it back.
+
+        The condition matters as much as the clamp. Most prompts already have a
+        snapshot at the block floor of their end, staged by the last prefill
+        chunk, and paying a cycle of speculation to stage a second one at the
+        same rounded position buys nothing. The scheduler compares the plan
+        against the block grid and sets the flag only when the two disagree,
+        which is a prompt whose length is a block multiple, or one whose fine
+        cut the cache declined.
+        """
+        if not sequence.needs_prompt_end_snapshot:
+            return -1
+        return 0 if sequence.committed == 0 else -1
+
     def _truncate_to_kept(self, sequence: SequenceState) -> None:
         """Undo the tokens a stop discarded, without a forward pass.
 
@@ -729,6 +790,8 @@ class PlainDecodeCycle(_BaseCycle):
         detok_start = self.clock.now()
         events, finished, committed = self.commit(batch, outcomes, proposals)
         detok_ms = (self.clock.now() - detok_start) * 1000.0
+        for sequence in batch:
+            self.stage_prompt_end(sequence)
         wall_ms = (self.clock.now() - started) * 1000.0
         profile = self.finish_profile(
             profile,
@@ -804,10 +867,13 @@ class MTPDecodeCycle(_BaseCycle):
     ) -> tuple[dict[int, tuple[int, ...]], int]:
         if self.drafter is None:
             return {}, 0
-        depths = [
-            min(depth, self.draft_budget(sequence))
-            for sequence, depth in zip(batch, self.controller.next_depths(len(batch)))
-        ]
+        depths = []
+        for sequence, depth in zip(batch, self.controller.next_depths(len(batch))):
+            depth = min(depth, self.draft_budget(sequence))
+            cap = self.first_cycle_depth(sequence)
+            if cap >= 0:
+                depth = min(depth, cap)
+            depths.append(depth)
         if not any(depths):
             return {}, 0
         states = [s.state for s in batch]
@@ -864,6 +930,8 @@ class MTPDecodeCycle(_BaseCycle):
         detok_start = self.clock.now()
         events, finished, committed = self.commit(batch, outcomes, proposals)
         detok_ms = (self.clock.now() - detok_start) * 1000.0
+        for sequence in batch:
+            self.stage_prompt_end(sequence)
 
         self.controller.record(profile, outcomes)
         if self.drafter is not None and hasattr(self.drafter, "observe"):

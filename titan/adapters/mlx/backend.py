@@ -76,6 +76,46 @@ class MLXModelBackend:
     def draft_depth_max(self) -> int:
         return self.model.draft_depth_max
 
+    @property
+    def layer_layout(self) -> tuple[str, ...]:
+        """Per-layer cache kind, for the cache signature.
+
+        The store comes after the backend in the composition order precisely so
+        that it can name this: a payload written under one layer layout and read
+        back under another is silent nonsense, so the layout goes into every
+        block digest and every file header.
+        """
+        return self.model.layer_layout
+
+    @property
+    def state_bytes_per_token(self) -> float:
+        """What one more token of context costs the guard. From the shapes."""
+        return self.model.state_bytes_per_token
+
+    def state_codec(self, signature: Any) -> Any:
+        """The :class:`~titan.adapters.cache.codec.StateCodec` for this model.
+
+        Built here rather than by the wiring because only the adapter knows how
+        a state handle turns into bytes, and only the backend knows which
+        ``ModelState`` a handle resolves to.
+        """
+        from .codec import MLXStateCodec  # noqa: PLC0415 - keeps import cost local
+
+        # The codec is handed the handle table, not a state. The cache calls it
+        # with whatever the engine gave the cache, and the engine deals in
+        # opaque handles, so resolving one is the backend's job and nobody
+        # else's.
+        return MLXStateCodec(signature, self._state)
+
+    def resident_gb(self) -> float:
+        """What the loop's guard reads. Active device memory plus the weights.
+
+        Measured rather than modelled, and measured here because
+        ``mx.get_active_memory`` is only meaningful on the thread that owns the
+        MLX stream, which is the scheduler thread that calls this.
+        """
+        return mx.get_active_memory() / 1e9
+
     # -- state lifecycle ---------------------------------------------------
     def open_state(self, seq: SequenceId, capacity_hint: int) -> StateHandle:
         handle = next(self._handles)
@@ -109,14 +149,23 @@ class MLXModelBackend:
         snapshot: bool = False,
     ) -> _Logits | None:
         model_state = self._state(state)
+        # No hidden state from a prefill chunk, ever. Asking for it turns on the
+        # vendored ``target_verify`` path for the whole chunk, and that path
+        # runs one kernel launch per token: it exists for a verify block a few
+        # columns wide and it is a disaster over 2048. A 150-token final chunk
+        # measured 200 seconds this way against 0.1 for the same chunk without.
+        # The drafter's seed hidden state comes from the verify forward, which
+        # is small and is where that path belongs.
         result = self.model.prefill(
             tokens,
             model_state,
             want_logits=want_logits,
-            want_hidden=self.draft_depth_max > 0,
+            want_hidden=False,
         )
         if snapshot:
-            model_state.stage_snapshot()
+            # A plan boundary: the cache will be asked to serialise it when the
+            # sequence retires, so it outlives every rollback copy.
+            model_state.stage_snapshot(pinned=True)
         return None if result.logits is None else _Logits(result.logits)
 
     def decode(
@@ -146,51 +195,95 @@ class MLXModelBackend:
         """One padded row block for the whole batch, one host sync."""
         start = time.perf_counter()
         model_states = [self._state(s) for s in states]
-        width = max(len(d.tokens) for d in drafts) + 1
+        # A candidate's tokens are the whole row: the engine prepends the
+        # pending token in ``_BaseCycle.verify_candidates``, so the row is
+        # (pending, d1, ..., dk) and the block width is the longest row as it
+        # stands. Adding one here would verify a column of padding and count it
+        # as a drafted token.
+        width = max(len(d.tokens) for d in drafts)
         rows = [_pad_draft(d, width) for d in drafts]
 
-        target = (
-            model_states[0]
-            if len(model_states) == 1
-            else ModelState.batch(model_states, phase=PHASE_VERIFY)
-        )
+        # One forward per sequence, one host sync for the batch.
+        #
+        # Lockstep batched verify is the shape this method is written for and
+        # it is not finished: ``ModelState.batch`` builds joined caches, the
+        # forward advances those, and nothing puts the rows back into the
+        # per-sequence states afterwards, so a second stream reads a state that
+        # never moved. That is W4.2, and it is a change in the state module
+        # rather than here. Until it lands, the batch is dispatched as separate
+        # forwards, which is correct, gives up the row-count win the expert
+        # gather pays for (300 GB/s at one row against 549 at eight), and keeps
+        # the acceptance reduction and the single host sync exactly as they
+        # will be: the graph for every row is built before anything is
+        # evaluated, so the cycle still crosses to the host once.
         verify_start = time.perf_counter()
-        logits = self.model.verify(rows, target, snapshot=True)
+        # A one-column block has nothing to roll back to, so it stages no
+        # snapshot. Staging one is a full copy of the recurrent state, around
+        # 110 MiB, and paying that on every decode cycle to protect a rollback
+        # that cannot happen is most of a decode step.
+        results = [
+            self.model.verify([row], state, snapshot=width > 1)
+            for row, state in zip(rows, model_states)
+        ]
         verify_ms = (time.perf_counter() - verify_start) * 1000.0
 
         accept_start = time.perf_counter()
-        drafted = mx.array([list(r[1:]) for r in rows], dtype=mx.int32)
-        argmax = mx.argmax(logits, axis=-1).astype(mx.int32)
-        agree = (argmax[:, :-1] == drafted).astype(mx.int32)
-        accepted_counts = mx.cumprod(agree, axis=1).sum(axis=1)
-        bonus_index = mx.minimum(accepted_counts, width - 1)
-        bonus = mx.take_along_axis(argmax, bonus_index[:, None], axis=1)[:, 0]
+        accept_parts = []
+        bonus_parts = []
+        for row, result in zip(rows, results):
+            argmax = mx.argmax(result.logits, axis=-1).astype(mx.int32)
+            if width > 1:
+                drafted = mx.array([row[1:]], dtype=mx.int32)
+                agree = (argmax[:, :-1] == drafted).astype(mx.int32)
+                counted = mx.cumprod(agree, axis=1).sum(axis=1)
+            else:
+                # Depth zero: one column, nothing drafted, the argmax is it.
+                counted = mx.zeros((1,), dtype=mx.int32)
+            index = mx.minimum(counted, width - 1)
+            accept_parts.append(counted)
+            bonus_parts.append(mx.take_along_axis(argmax, index[:, None], axis=1)[:, 0])
+        accept_vector = mx.concatenate(accept_parts)
+        bonus = mx.concatenate(bonus_parts)
         # The single host sync of the cycle: two small integer vectors cross,
         # never the logits.
-        mx.eval(accepted_counts, bonus)
-        counts = accepted_counts.tolist()
+        mx.eval(accept_vector, bonus)
+        counts = accept_vector.tolist()
         bonuses = bonus.tolist()
         accept_ms = (time.perf_counter() - accept_start) * 1000.0
 
         outcomes: list[VerifyOutcome] = []
+        accepted_counts: list[int] = []
+        for draft, n in zip(drafts, counts):
+            # Column 0 of the row is the pending token, which was never a
+            # draft. The drafted chain is everything after it, so a row of
+            # width w carries w - 1 drafts and the accepted run is the slice
+            # that starts at column 1.
+            n_drafted = len(draft.tokens) - 1
+            accepted_counts.append(min(int(n), n_drafted))
+
+        # Rollback, once for the whole block, and only when something was
+        # rejected. The forward left every state covering ``width`` more
+        # tokens; a row that committed all of them is already where it belongs,
+        # and the cheapest correct rollback of nothing is not doing one.
+        for state, result, n in zip(model_states, results, accepted_counts):
+            if n + 1 < width:
+                self.model.rollback_verify(state, result.gdn_states, [n], width)
+
         for draft, model_state, n, extra in zip(
-            drafts, model_states, counts, bonuses
+            drafts, model_states, accepted_counts, bonuses
         ):
-            n = min(int(n), len(draft.tokens))
             committed = n + 1
             entry_length = model_state.length - width
-            model_state.truncate(entry_length)
             model_state.length = entry_length + committed
+            model_state.prune_snapshots(entry_length)
             outcomes.append(
                 VerifyOutcome(
                     sequence_id=draft.sequence_id,
-                    accepted=tuple(draft.tokens[:n]),
+                    accepted=tuple(draft.tokens[1 : n + 1]),
                     bonus=int(extra),
-                    n_drafted=len(draft.tokens),
+                    n_drafted=len(draft.tokens) - 1,
                 )
             )
-        if target is not model_states[0]:
-            self._scatter(target, model_states)
 
         wall_ms = (time.perf_counter() - start) * 1000.0
         profile = CycleProfile(
@@ -211,6 +304,15 @@ class MLXModelBackend:
         return outcomes, profile
 
     # -- snapshots ---------------------------------------------------------
+    def stage_snapshot(self, state: StateHandle, length: int) -> None:
+        model_state = self._state(state)
+        if model_state.length != length:
+            raise StateError(
+                f"cannot stage a snapshot at {length}: the state covers "
+                f"{model_state.length} tokens"
+            )
+        model_state.stage_snapshot(length, pinned=True)
+
     def export_snapshot(self, state: StateHandle, length: int) -> bytes:
         return self._state(state).export_snapshot(length)
 

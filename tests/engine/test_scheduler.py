@@ -57,7 +57,7 @@ def build_loop(*, cache=None, config=None, backend=None, tokenizer=None, profile
     clock = FakeClock()
     config = config or AdmissionConfig(prefill_chunk_tokens=2048, block_tokens=512)
     profiler = profiler or NullProfiler()
-    cycle = PlainDecodeCycle(
+    cycle = kwargs.pop("cycle", None) or PlainDecodeCycle(
         backend=backend, tokenizer=tokenizer, clock=clock, profiler=profiler
     )
     loop = EngineLoop(
@@ -100,8 +100,15 @@ def test_a_turn_runs_one_prefill_chunk_and_no_decode():
     assert backend.verify_calls == []
 
     loop.step()
+    # The block floor of the 4999-token prefill is 4608, and it ends a chunk of
+    # its own so the terminal snapshot has somewhere to be staged.
+    assert [call[1] for call in backend.prefill_calls] == [2048, 2048, 512]
+    assert loop.live[0].phase is SequencePhase.PREFILLING
+    assert backend.verify_calls == []
+
+    loop.step()
     # 4999 tokens of prefill: the last chunk is short and ends the phase.
-    assert [call[1] for call in backend.prefill_calls] == [2048, 2048, 903]
+    assert [call[1] for call in backend.prefill_calls] == [2048, 2048, 512, 391]
     assert loop.live[0].phase is SequencePhase.DECODING
     assert backend.verify_calls == []
 
@@ -114,7 +121,9 @@ def test_snapshots_are_staged_on_the_grid_and_at_the_prefill_end():
     loop.submit(make_request(tuple(range(5000)), max_tokens=1), Sink())
     drain(loop)
     staged = [call for call in backend.prefill_calls if call[2]]
-    assert [call[1] for call in staged] == [2048, 2048, 903]
+    # 2048, 4096 are the grid multiples; 4608 is the block floor of the 4999
+    # token prefill, which is where the terminal snapshot can be restored from.
+    assert [call[1] for call in staged] == [2048, 2048, 512]
     assert len(staged) == 3
 
 
@@ -201,16 +210,35 @@ def test_a_finished_sequence_frees_its_state_and_offers_its_prefix():
     assert loop.live == ()
     covered, boundaries = cache.stores[0]
     assert covered == 6  # three prompt tokens plus four generated, less pending
-    assert boundaries[-1] == 6
+    # Nothing staged a snapshot: a three-token prompt has no block end in it,
+    # so the prefix is offered with no resumable point rather than with one the
+    # store would have to drop.
+    assert boundaries == ()
 
 
-def test_the_store_is_skipped_when_the_state_does_not_match_the_tokens():
-    """D9 as a runtime rule: a prefix the state cannot back is not offered.
+def test_the_offered_boundaries_are_the_ones_something_staged():
+    """The plan's snapshot positions, and nothing invented on the way out. A
+    boundary no snapshot sits at is one the store rounds down, fails to export
+    and counts as a truncated chain."""
+    config = AdmissionConfig()
+    cache = FakeCache(config=config)
+    loop, _backend, _tokenizer = build_loop(cache=cache, config=config)
+    loop.submit(make_request(tuple(range(3000)), max_tokens=2), Sink())
+    drain(loop)
+    covered, boundaries = cache.stores[0]
+    assert covered == 3001
+    assert boundaries == (2048, 2560)
+
+
+def test_a_refused_truncation_records_no_boundary():
+    """D9 as a runtime rule: a lookup may never report a length it cannot
+    restore, and no more than that.
 
     The stop string spans two tokens, so the trim reaches back into a block the
     verify already closed. A backend that refuses that truncation is right to --
-    it is below the staged snapshot -- and the loop's answer is to decline the
-    store rather than record a length the cache could not restore.
+    it is below the staged snapshot -- and what the loop owes the cache is a
+    prefix with no resumable point, not silence. The blocks of the prefix that
+    survives are still the KV for those same token ids.
     """
     from titan.core.errors import StateError
 
@@ -242,10 +270,12 @@ def test_the_store_is_skipped_when_the_state_does_not_match_the_tokens():
 
     assert "".join(e.text for e in sink.events if isinstance(e, TokenEvent)) == "Hello"
     assert sink.end.finish_reason is FinishReason.STOP
-    assert cache.stores == []
+    # The refused truncation left the state longer than the sequence. What is
+    # offered is trimmed to what the state actually backs, and no boundary is
+    # recorded, so a later lookup cannot report a length it cannot restore.
+    assert [boundaries for _covered, boundaries in cache.stores] == [()]
     names = [name for name, _fields in profiler.events]
     assert "truncate_refused" in names
-    assert "store_skipped" in names
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +371,92 @@ def test_stats_report_what_the_loop_did():
     drain(loop)
     stats = loop.stats()
     assert stats.admitted == 1
-    assert stats.prefill_chunks == 2
+    assert stats.prefill_chunks == 3
     assert stats.decode_cycles == 4
     assert stats.tokens_out == 4
     assert stats.mean_rows_per_cycle == 1.0
     assert stats.queue_depth == 0
+
+
+# ---------------------------------------------------------------------------
+# the prompt-end boundary
+# ---------------------------------------------------------------------------
+
+
+def test_the_first_decode_cycle_stages_the_end_of_the_prompt():
+    """Prefill stops one token short of the prompt, so the boundary a follow-up
+    turn would resume from does not exist when prefill ends. The cycle that
+    consumes the last prompt token is the only place it can be staged, and it
+    costs one copy of the recurrent state and no forward pass."""
+    config = AdmissionConfig()
+    cache = FakeCache(config=config)
+    loop, backend, _tokenizer = build_loop(cache=cache, config=config)
+    # 3072 is a block multiple, so the last prefill chunk stops at 2560 and the
+    # prompt end is a block above the deepest thing prefill could stage.
+    loop.submit(make_request(tuple(range(3072)), max_tokens=2), Sink())
+    drain(loop)
+    assert (1, 3072) in backend.staged
+    covered, boundaries = cache.stores[0]
+    assert boundaries[-1] == 3072
+
+
+def test_a_prompt_whose_end_prefill_already_covered_stages_nothing_extra():
+    """A second snapshot at the same rounded position buys nothing, and it is
+    110 MiB of recurrent state to hold until the sequence retires."""
+    config = AdmissionConfig()
+    cache = FakeCache(config=config)
+    loop, backend, _tokenizer = build_loop(cache=cache, config=config)
+    loop.submit(make_request(tuple(range(3000)), max_tokens=2), Sink())
+    drain(loop)
+    assert backend.staged == []
+    _covered, boundaries = cache.stores[0]
+    assert boundaries[-1] == 2560
+
+
+def test_the_cycle_that_ends_the_prompt_drafts_nothing_when_it_must_stage():
+    """A verify block wider than one column lands the state past the prompt
+    end, and the boundary is then unreachable without a forward pass. So the
+    first cycle spends no drafts, once, and only when the boundary is owed."""
+    from titan.engine.decode_cycle import MTPDecodeCycle
+
+    from tests.engine.conftest import ScriptedDrafter
+    from tests.engine.test_mtp_parity import perfect
+
+    config = AdmissionConfig()
+    cache = FakeCache(config=config)
+    backend = FakeBackend()
+    cycle = MTPDecodeCycle(
+        backend=backend,
+        tokenizer=FakeTokenizer(),
+        drafter=ScriptedDrafter(perfect(backend)),
+        max_depth=3,
+    )
+    loop, _backend, _tokenizer = build_loop(
+        cache=cache, config=config, backend=backend, cycle=cycle
+    )
+    loop.submit(make_request(tuple(range(3072)), max_tokens=8), Sink())
+    drain(loop)
+    assert backend.verify_calls[0] == 1
+    assert max(backend.verify_calls) > 1
+    assert (1, 3072) in backend.staged
+
+
+def test_a_short_prompt_has_no_prompt_end_boundary_to_stage():
+    config = AdmissionConfig()
+    loop, backend, _tokenizer = build_loop(config=config)
+    loop.submit(make_request((1, 2, 3), max_tokens=3), Sink())
+    drain(loop)
+    assert backend.staged == []
+
+
+def test_an_unaligned_prompt_end_is_left_to_the_prefill_plan():
+    """A restore point has to be a block end, so the store rounds every
+    boundary down to the grid. Staging one at an unaligned prompt end produces
+    a snapshot the store looks for at the rounded position, does not find, and
+    drops: work, a 110 MiB copy, and a counted chain truncation for nothing."""
+    config = AdmissionConfig()
+    cache = FakeCache(config=config)
+    loop, backend, _tokenizer = build_loop(cache=cache, config=config)
+    loop.submit(make_request(tuple(range(3001)), max_tokens=2), Sink())
+    drain(loop)
+    assert backend.staged == []

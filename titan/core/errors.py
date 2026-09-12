@@ -18,6 +18,7 @@ __all__ = [
     "BackendError",
     "KernelError",
     "TemplateError",
+    "TokenizerError",
     "ParseError",
 ]
 
@@ -66,6 +67,16 @@ class KernelError(TitanError):
 
 class TemplateError(TitanError):
     """The chat template could not render the request."""
+
+
+class TokenizerError(TitanError):
+    """Text could not be encoded or ids could not be decoded.
+
+    Separate from :class:`TemplateError` because the two fail at different
+    points and mean different things to the caller: a template error is a
+    conversation the model cannot be asked, a tokenizer error is a string the
+    vocabulary cannot represent or a detokenisation stream that lost its place.
+    """
 
 
 class ParseError(TitanError):

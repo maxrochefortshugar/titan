@@ -211,3 +211,19 @@ async def test_streaming_response_is_not_buffered_to_the_end():
                     if line.strip() == "data: [DONE]":
                         break
     assert seen_first
+
+
+@pytest.mark.anyio
+async def test_metrics_reports_the_profile_and_the_loop(make_client):
+    """A benchmark number that cannot name its configuration is not evidence,
+    so the counters, the decode summary and the loop's own stats come from one
+    endpoint."""
+    client = make_client(FakeEngine(deltas=("hi",)))
+    async with client:
+        response = await client.get("/metrics")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == MODEL_NAME
+    # The fake engine has no loop and the deps carry no profiler, so what comes
+    # back is the identity of the instance and nothing invented on top of it.
+    assert "loop" not in body

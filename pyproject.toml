@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "jinja2",
+    "tokenizers",
 ]
 
 [project.optional-dependencies]

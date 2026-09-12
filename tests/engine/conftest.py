@@ -35,7 +35,7 @@ from titan.core.types import (
     StopCondition,
     VerifyOutcome,
 )
-from titan.engine.admission import AdmissionConfig, plan_chunks
+from titan.engine.admission import AdmissionConfig, plan_chunks, snapshot_positions
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +105,7 @@ class FakeBackend:
         self.verify_calls: list[int] = []
         self.prefill_calls: list[tuple[int, int, bool]] = []
         self.truncations: list[tuple[int, int]] = []
+        self.staged: list[tuple[int, int]] = []
 
     # -- the oracle the tests compare against ------------------------------
     def argmax_after(self, context: Sequence[int]) -> int:
@@ -233,6 +234,15 @@ class FakeBackend:
         return outcomes, profile
 
     # -- snapshots ---------------------------------------------------------
+    def stage_snapshot(self, state: StateHandle, length: int) -> None:
+        entry = self._state(state)
+        if len(entry.tokens) != length:
+            raise StateError(
+                f"cannot stage at {length}: the state covers {len(entry.tokens)}"
+            )
+        self.staged.append((int(state), length))
+        entry.snapshots.add(length)
+
     def export_snapshot(self, state: StateHandle, length: int) -> bytes:
         entry = self._state(state)
         if length not in entry.snapshots:
@@ -305,6 +315,9 @@ class FakeCache:
         self.stores: list[tuple[int, tuple[int, ...]]] = []
         self.restored: list[int] = []
         self.plans: list[tuple[int, int]] = []
+        self.boundary_calls: list[tuple[int, int, bool]] = []
+        self.leases: list[object] = []
+        self.released: list[object] = []
 
     def lookup(self, tokens: Sequence[int]) -> PrefixMatch:
         matched = min(self.matched, len(tokens))
@@ -333,6 +346,30 @@ class FakeCache:
             block=self.config.block_tokens,
             grid=self.config.snapshot_grid,
         )
+
+    def snapshot_boundaries(
+        self, matched: int, total: int, contended: bool = False
+    ) -> tuple[int, ...]:
+        self.boundary_calls.append((matched, total, contended))
+        return snapshot_positions(
+            plan_chunks(
+                matched,
+                total,
+                chunk=self.config.prefill_chunk_tokens,
+                block=self.config.block_tokens,
+                grid=self.config.snapshot_grid,
+            ),
+            grid=self.config.snapshot_grid,
+            block=self.config.block_tokens,
+        )
+
+    def reserve(self, match: PrefixMatch) -> object:
+        lease = object()
+        self.leases.append(lease)
+        return lease
+
+    def release(self, lease: object) -> None:
+        self.released.append(lease)
 
     def stats(self) -> Mapping[str, float]:
         return {"stores": float(len(self.stores))}

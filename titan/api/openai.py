@@ -24,11 +24,12 @@ an estimate of it.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Sequence
+from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from fastapi import Depends, FastAPI, Header, Request as FastAPIRequest
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -93,6 +94,11 @@ class ChatDeps:
     call_id_factory: Callable[[], str] = wire.new_call_id
     clock: Callable[[], float] = time.monotonic
     created_factory: Callable[[], int] = wire.unix_now
+    profiler: Any = None
+    """Optional. ``GET /metrics`` serves its snapshot when there is one."""
+    resolved_config: Mapping[str, Any] | None = None
+    """The resolved config, redacted, echoed at ``GET /metrics`` so that every
+    measurement can name the configuration it came from."""
 
 
 @dataclass(frozen=True)
@@ -508,6 +514,36 @@ def build_app(deps: ChatDeps) -> FastAPI:
             "model": deps.config.model.name,
             "max_context": deps.config.limits.max_context,
         }
+
+    @app.get("/metrics", dependencies=[Depends(require_auth)])
+    async def metrics() -> dict[str, Any]:
+        """Counters, the decode summary, and the configuration that produced
+        them. One endpoint, because a benchmark number that cannot name its
+        configuration is not evidence."""
+        body: dict[str, Any] = {"model": deps.config.model.name}
+        if deps.profiler is not None:
+            snapshot = getattr(deps.profiler, "snapshot", None)
+            if callable(snapshot):
+                body.update(dict(snapshot()))
+            recent = getattr(deps.profiler, "recent_events", None)
+            if callable(recent):
+                body["recent_events"] = list(recent(60))
+            cycles = getattr(deps.profiler, "recent_cycles", None)
+            if callable(cycles):
+                body["recent_cycles"] = list(cycles(12))
+        stats = getattr(deps.engine, "stats", None)
+        if callable(stats):
+            loop = stats()
+            body["loop"] = (
+                dict(loop) if isinstance(loop, dict) else dataclasses.asdict(loop)
+            )
+        cache = getattr(getattr(deps.engine, "loop", None), "cache", None)
+        cache_stats = getattr(cache, "stats", None)
+        if callable(cache_stats):
+            body["cache"] = dict(cache_stats())
+        if deps.resolved_config is not None:
+            body["config"] = dict(deps.resolved_config)
+        return body
 
     @app.get("/v1/models", dependencies=[Depends(require_auth)])
     async def list_models() -> dict[str, Any]:
