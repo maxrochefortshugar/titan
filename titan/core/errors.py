@@ -1,0 +1,72 @@
+"""Error taxonomy. Every port raises one of these, never a bare exception.
+
+The split matters operationally: a :class:`CapacityError` is a 429 and the
+request can be retried; a :class:`StateError` means the engine's own invariants
+broke, so the sequence is aborted and the incident is logged with the profile
+around it.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "TitanError",
+    "ConfigError",
+    "CapacityError",
+    "MemoryGuardError",
+    "StateError",
+    "SnapshotError",
+    "BackendError",
+    "KernelError",
+    "TemplateError",
+    "ParseError",
+]
+
+
+class TitanError(Exception):
+    """Base class for everything Titan raises deliberately."""
+
+
+class ConfigError(TitanError):
+    """Configuration failed validation. Raised at startup, never later."""
+
+
+class CapacityError(TitanError):
+    """Admission refused: queue full, or context longer than the window."""
+
+
+class MemoryGuardError(CapacityError):
+    """Admitting this request would cross the resident-memory guard.
+
+    The guard is a soft limit that gates admission, not a limit that serialises
+    running work. Set too low it silently serialises concurrent requests, which
+    cost the overlay its whole concurrency win until it was found.
+    """
+
+
+class StateError(TitanError):
+    """A state handle was used in a way that breaks its invariants: a stale
+    handle, a truncation below the last snapshot, a length mismatch."""
+
+
+class SnapshotError(TitanError):
+    """A recurrent-state snapshot was missing, stale or version-mismatched.
+
+    Never fatal to the process: the caller drops the cache entry and recomputes.
+    """
+
+
+class BackendError(TitanError):
+    """The model backend failed. The sequence dies, the process does not."""
+
+
+class KernelError(TitanError):
+    """A fast kernel failed or produced out-of-tolerance output. The registry
+    falls back to the reference implementation and counts it."""
+
+
+class TemplateError(TitanError):
+    """The chat template could not render the request."""
+
+
+class ParseError(TitanError):
+    """Tool-call or reasoning markup ended in an unparseable state."""

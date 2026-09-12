@@ -1,0 +1,24 @@
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226443,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226444,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nThe user chose option 1: expand"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226444,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" the full requirement graph from REQ-001"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". I need to query the specification. But I"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" don't know the schema — I should call the tool"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" with no query first to discover schema and baseline. Let"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me do that.\n"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_dcb74cd8","type":"function","function":{"name":"query_specification","arguments":"{}"}}]}}]}
+
+data: {"id":"chatcmpl-1bbc45f2","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

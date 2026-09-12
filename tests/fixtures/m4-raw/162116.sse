@@ -1,0 +1,60 @@
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226468,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226470,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nNow"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226470,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I have the full requirement tree (22"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226470,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" requirements). Let me also get the pointers"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226470,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" for a couple of key nodes to see if"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" locator info exists (REQ-"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"001 pointer was empty). Let me check"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" pointers on a few nodes to help the"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" user locate source files. Also check policy"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Bindings for REQ-001, and paths"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" from REQ-001 to something"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226471,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n\nLet me batch: query requirement REQ-"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"001 pointer already empty."}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Check a sample: requirement REQ-"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"003 pointer, scenario SCN-sh"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"ape pointer, test TST-platform"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-qualification pointer, and policyBindings(node: \"REQ"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-001\").\n\nAlso maybe"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" check SYS-specification structure since it"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"'s the only system. But the user"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226472,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" asked for option 1: expand"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226473,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" full requirement graph from REQ-001."}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226473,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I've largely got it. Let me"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226473,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" get pointers + policy bindings to enrich."}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226473,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226473,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226476,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_152950a4","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Enrich {\\n  requirements(limit: 100) {\\n    id\\n    pointer { system locator revision digest trust }\\n  }\\n  tests(limit: 50) {\\n    id\\n    pointer { system locator digest trust }\\n    verifies { id }\\n  }\\n  scenarios(limit: 50) {\\n    id\\n    pointer { system locator digest trust }\\n    verifies { id }\\n  }\\n  policyBindings(node: \\\"REQ-001\\\", limit: 50) {\\n    id\\n    binding\\n    relation\\n    release\\n    version\\n    rule\\n    behavior\\n    severity\\n    state\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-4a90b4dd","object":"chat.completion.chunk","created":1789226476,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

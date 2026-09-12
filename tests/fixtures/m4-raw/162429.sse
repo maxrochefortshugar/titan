@@ -1,0 +1,26 @@
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226662,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226664,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nThe"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226664,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" second query failed because limit"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226664,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 200 exceeds max 1"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226665,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"00. Let me redo with limit 10"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226665,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"0.\n"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226665,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226666,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_e9b2038a","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Bindings {\\n  policyBindings(limit: 100) {\\n    id\\n    binding\\n    relation\\n    release\\n    version\\n    rule\\n    behavior\\n    severity\\n    state\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226666,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n"}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226669,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_8ef4a03e","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Cnt(limit: 100) {\\n  containers(limit: $limit) {\\n    id\\n    trust\\n    satisfies { id }\\n    contains {\\n      ... on Component { id }\\n      ... on Container { id }\\n      ... on DrivingAdapter { id }\\n      ... on Organism { id }\\n      ... on Page { id }\\n      ... on RestClient { id }\\n      ... on TypescriptCli { id }\\n      ... on TypescriptWorker { id }\\n      ... on View { id }\\n    }\\n  }\\n}\", \"variables\": {\"limit\": 100}}"}}]}}]}
+
+data: {"id":"chatcmpl-ac52132b","object":"chat.completion.chunk","created":1789226669,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

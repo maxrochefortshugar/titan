@@ -1,0 +1,34 @@
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226456,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226459,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nNow expand the derived children ("}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"REQ-002, REQ-"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"identity, TT-REQ-registry, REQ"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-028) one level, and"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" check the deeper derived set at depth 2"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" (REQ-003, REQ-011"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", REQ-034, REQ-035"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", REQ-contract-implementation-loop, TT-REQ"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226460,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-registry-parts).\n\nLet me query all requirements"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226461,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" with their derives/incoming edges in"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226461,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" one go.\n"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226461,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226463,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_3c50d24b","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query ReqTree {\\n  requirements(limit: 100) {\\n    id\\n    kind\\n    trust\\n    derives { id }\\n    incomingDerives { id }\\n    incomingVerifies { id kind }\\n    incomingSatisfies { id kind }\\n    findings(limit: 5) { severity code message }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-18d67e0f","object":"chat.completion.chunk","created":1789226463,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

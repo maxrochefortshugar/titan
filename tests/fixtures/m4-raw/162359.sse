@@ -1,0 +1,174 @@
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nNow"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I have the schema. Let me"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" continue with the gap analysis I proposed."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I'll do several independent queries in one"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" block:\n\n1. Requirements with coverage:"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" get all requirements with incomingSatisfies and incoming"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Verifies.\n2. Trace SYS-specification"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226625,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" structure: contains.\n\nLet"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me query requirements with limit"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 50, requesting id, trust, incomingS"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"atisfies {id kind}, incomingVerifies"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" {id kind}.\n\nAlso query"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" system(id: \"SYS-specification\") { contains"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" { id kind } }.\n\nNote:"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226626,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" `contains: [ContainsTarget!]!` —"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" ContainsTarget is a union, so I need inline"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" fragments or just id/kind via..."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" For unions, I need to select fields on"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" concrete types or use `... on X`."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Actually in GraphQL, for a union"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" you can select `__typename` and"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" inline fragments. But `id`"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" and `kind` are on Node interface"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226627,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"... unions don't automatically get interface"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" fields unless declared with `union X"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" = A | B` — GraphQL unions"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" do not allow selecting interface fields directly"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" without inline fragments? Actually, in"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" modern GraphQL spec (and many implementations"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"), you can select fields that"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" are common to all union members... no, that"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226628,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"'s not standard. Standard GraphQL requires"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" that fields selected on a union must"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" be selected on all members or use inline fragments. Actually"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" the spec says: for union type"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" selection sets, only __typename"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" and fields defined on..."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" hmm. GraphQL spec: \""}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Field Selections on Objects, Interfaces"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226629,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", and Unions Types\" —"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" a selection set on a union can"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" include fields that are defined on all"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" members of the union (since June"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 2018 spec update"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", fields common to all union members are"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" allowed). Yes, the spec allows"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" selecting fields that exist on all union"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226630,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" members. Since all these types implement"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Node with id/kind, selecting"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" id and kind should work.\n\n"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Let me write the query carefully."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" For SatisfiesSource union ="}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Component | Container | System | Typescript"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Cli | TypescriptWorker — all"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" have id and kind. Good."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226631,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n\nLet me do:\n\nquery"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" {\n  requirements(limit:"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 50) {\n   "}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" id\n    kind\n    trust\n    derives { id"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" }\n    incomingDerives {"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" id }\n    incomingSatisfies {"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" id kind }\n    incomingVerifies { id kind }"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n    findings(limit: 5) { id severity"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226632,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" code message subjectId }\n"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"  }\n}\n\nAnd:"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nquery {\n  system(id: \""}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"SYS-specification\")"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" {\n    id kind trust\n    contains { id kind"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" }\n    satisfies { id }\n    binds { id"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" kind }\n  }\n}\n\nI can"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" combine both in one query with aliases."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226633,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Let me do that, passing baseline"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n\nActually can I include multiple root"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" fields in one query? Yes. Let me do"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" it.\n\nLet me also check policy"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Bindings for the system node maybe. Let's"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" keep it focused: gap analysis"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" + structure.\n\nI'll pass baseline."}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226634,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226637,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_566f04e0","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Coverage($limit: Int!) {\\n  requirements(limit: $limit) {\\n    id\\n    kind\\n    trust\\n    derives { id }\\n    incomingDerives { id }\\n    incomingSatisfies { id kind }\\n    incomingVerifies { id kind }\\n    findings(limit: 5) { id severity code message subjectId }\\n  }\\n}\", \"variables\": {\"limit\": 50}}"}}]}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226637,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n"}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226639,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_f12e96ba","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Sys {\\n  system(id: \\\"SYS-specification\\\") {\\n    id\\n    kind\\n    trust\\n    binds { id kind }\\n    satisfies { id }\\n    contains { id kind }\\n    findings(limit: 10) { id severity code message subjectId }\\n    impact(depth: 3) { node edge depth }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-727fb77e","object":"chat.completion.chunk","created":1789226639,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

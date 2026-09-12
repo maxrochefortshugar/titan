@@ -1,0 +1,96 @@
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226401,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nWe"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226401,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" need answer to continue"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226401,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". We have baseline. Need likely ask"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226401,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" what to continue? But maybe can provide overview"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" and ask direction. Need maybe query something"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" to continue? User says continue, likely previous omitted"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". We should perhaps state can continue by exploring"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" specification; maybe ask what part. But maybe should"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" proactively query representative nodes? Need be"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" helpful. Could query nodes to get contents."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Need raw content unavailable but structured query. Maybe"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226402,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" query specification list, systems"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", requirements? Since \"continue\" ambiguous"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", we can offer next step"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". But perhaps we should use tool"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" to fetch some content to continue automatically."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Which query? We don't"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" know prior context. Could query top-level"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" nodes with limited fields to map."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226403,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Need avoid overfetch. We can query"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" specification query? There is no single"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" root except nodes. Could query nodes(limit"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":": 20) { id kind"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" trust pointer { system locator } }."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" But Node interface has fields. Let's"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" do maybe query nodes with attributes? Attributes"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" JSON could be huge. Avoid. Maybe"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226404,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" query counts? No count. Query nodes"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"(kinds: [\"Specification\"], limit:"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 10). Then perhaps systems."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" We can make parallel queries? Need baseline"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" for consistent follow-up. We can"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" supply baseline. We can query several"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" in parallel: specifications, systems,"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226405,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" requirements, components, tests? But user says continue"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" maybe wants continue previous task"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". Without prior, maybe fetch high"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-level map. Use baseline."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Let's query specifications and nodes?"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" We need not overdo."}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" We can query specification nodes and"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" systems, requirements. Use parallel.\n"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226406,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226409,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_8ac6c525","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query HighLevelMap {\\n  specifications(limit: 10) {\\n    id\\n    kind\\n    trust\\n    pointer {\\n      system\\n      locator\\n      revision\\n      digest\\n    }\\n    attributes\\n  }\\n  systems(limit: 10) {\\n    id\\n    kind\\n    trust\\n    pointer {\\n      system\\n      locator\\n    }\\n    attributes\\n  }\\n  requirements(limit: 10) {\\n    id\\n    kind\\n    trust\\n    pointer {\\n      system\\n      locator\\n    }\\n    attributes\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-fac3c308","object":"chat.completion.chunk","created":1789226410,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

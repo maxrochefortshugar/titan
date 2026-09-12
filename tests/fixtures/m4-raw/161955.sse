@@ -1,0 +1,22 @@
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226394,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nWe need to respond to user \"continue\". Need context"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"? We have only tool query_spec"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"ification. They said continue, likely prior conversation"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" absent. We need call query_specification with no query to"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" discover schema and baseline? We should do that.\n"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_73b9afb5","type":"function","function":{"name":"query_specification","arguments":"{}"}}]}}]}
+
+data: {"id":"chatcmpl-db8d33f4","object":"chat.completion.chunk","created":1789226395,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

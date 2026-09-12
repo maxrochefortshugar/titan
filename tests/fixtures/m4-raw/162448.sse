@@ -1,0 +1,230 @@
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226669,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nThe variables need to be passed as JSON"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" object properly. I wrote `"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"{\"limit\": 100}`"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" — hmm, the error says `Expected"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" \"$\", found Name \"limit\"` which suggests"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" the variables weren't parsed as JSON and got m"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226671,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"angled. Let me just inline the limit value"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" instead of using a variable to avoid issues.\n\nActually earlier"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I used `$limit` with variables `"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"{\"limit\": 50}` and"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" it worked. The difference: in this"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" query I wrote `query Cnt(limit:"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 100)` in the query text —"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" oops! I wrote `query C"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"nt(limit: 100)`"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226672,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" instead of `query Cnt($limit:"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Int!)`. That's the bug."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Let me fix.\n\nAlso policyBindings returned"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" empty — no policy bindings materialized"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" at this baseline.\n\nLet me redo"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" the containers query with proper variable declaration, and"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" also check other structure: views"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226673,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", resources, decisions, constraints"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", contracts, mechanisms, capabilities — to"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" get a fuller map. Let"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me batch two calls:\n\nCall A"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":": containers with contains + satisfies (fix"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" syntax).\nCall B: inventory counts"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" of other kinds: views, resources,"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" decisions, constraints, contracts, mechanisms"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", capabilities, concepts, policies,"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226674,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" semanticPolicies, elements, actors."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n\nFor call B, I need to"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" be careful with union fields. Let"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"'s just get ids/kinds"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" and their key outgoing edges using `"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"edges(kinds:..., direction:...)"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"` which returns NodeEdge with node"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":": Node! (interface)"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226675,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" — that gives id/kind"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" directly since Node is an interface"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". That's a great generic"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" way to traverse! `edges(k"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"inds: [String!], direction"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":": Direction): [NodeEdge!"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"]!` and NodeEdge.node is"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Node (interface) so I can"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226676,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" select id/kind/trust directly"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n\nThat's much simpler."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Let me use edges for generic traversal"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n\nCall B: \n{"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n  views(limit: 1"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"00) { id trust references"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" { id kind } contains { ..."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"fragments } }\n  ..."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226677,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n}\n\nActually for views,"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" `references: [ReferencesTarget!"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"]!` is a union with tons"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" of members. Instead use edges():"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" { edges { id kind direction to"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" node { id kind } } } — but"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" does edges return all edges? Yes"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" generically. Let me use edges for"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226678,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" everything.\n\nLet me do:\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Call A: containers with edges.\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Call B: views, resources"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", decisions, constraints, contracts"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", mechanisms, capabilities, concepts, policies"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", semanticPolicies, actors,"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" elements — each with edges.\n\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Hmm, that could be large. Let"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me be selective: focus on"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226679,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" the governance side: decisions, constraints"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", semanticPolicies, policies,"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" contracts, mechanisms, capabilities, evidenceRegions"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", actors, elements, resources, views"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". Many may be empty."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n\nLet me query with ids only"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" first to gauge sizes, using edges only for"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" non-empty interesting ones. Actually simpler"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226680,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":": use `nodes(kinds: [..."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"], limit: 100)` which returns"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" [Node!]! interface —"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I can select id, kind, trust"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" directly! That's the efficient inventory"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" call.\n\nLet me do:\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"query Inventory {\n  nodes(limit"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":": 100) { id"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226681,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" kind trust }\n}\nBut"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" limit may cap at 1"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"00 and there might be more. Let"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me check total by kinds."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I'll do nodes(limit:"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"100) and see."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n\nPlan:\nCall A:"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" containers(limit:100)"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" { id trust satisfies {"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226682,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" id } edges { kind direction to"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" } } — wait edges returns Node"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Edge with node required;"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" I can select kind/direction"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"/to/id without node. Yes"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\nCall B: nodes"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"(limit: 100)"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" { id kind trust } for overall"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226683,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" inventory.\n\nLet's go."}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226684,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226684,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226686,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_4ae2165a","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Cnt {\\n  containers(limit: 100) {\\n    id\\n    trust\\n    satisfies { id }\\n    edges {\\n      id\\n      kind\\n      direction\\n      to\\n    }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226686,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n"}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226688,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_53e1287f","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Inventory {\\n  nodes(limit: 100) {\\n    id\\n    kind\\n    trust\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-c65917c2","object":"chat.completion.chunk","created":1789226688,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

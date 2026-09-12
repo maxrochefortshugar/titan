@@ -1,0 +1,36 @@
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226615,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226617,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nThe user is asking me to continue. I need to"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226617,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" actually use the tools now,"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226617,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" since I was given the tool `query"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226617,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"_specification`. Let me continue the traceability analysis"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226617,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". I should probably do one of the suggested"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" next steps. Let me start by"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" calling the tool without arguments to discover the schema and baseline,"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" then proceed.\n\nActually, the instructions say:"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" \"Call with no query to discover its schema and baseline."}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Supply that baseline for consistent follow-up queries.\" So let"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me call it with no query first"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_c5372cbf","type":"function","function":{"name":"query_specification","arguments":"{}"}}]}}]}
+
+data: {"id":"chatcmpl-16d310ee","object":"chat.completion.chunk","created":1789226618,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

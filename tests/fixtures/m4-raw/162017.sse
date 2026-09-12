@@ -1,0 +1,48 @@
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226410,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226411,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nWe need now respond. But maybe"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226411,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" need more info? Could query requirement"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226411,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" details? Attributes empty, no raw content. Maybe edges"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226411,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". For REQ-001, query edges"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226411,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" to see relationships. Since continue likely"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226411,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" wants exploration. Could query details for REQ-0"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"01. But maybe ask user what"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" to continue. We can say I reconnected"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" to baseline and current high-level map. Since no"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" prior thread visible, ask which thread. But"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" maybe we can proactively inspect REQ"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-001? Let's query edges"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226412,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" for REQ-001 and REQ-"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226413,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"002? Need maybe no attributes"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226413,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":". Use Node edges with kinds"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226413,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" direction and node fields id kind."}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226413,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Let's do one query alias"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226413,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226413,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226417,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_8ed6f61b","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query RequirementMap {\\n  req001: requirement(id: \\\"REQ-001\\\") {\\n    id\\n    kind\\n    trust\\n    edges {\\n      id\\n      kind\\n      direction\\n      from\\n      to\\n      node {\\n        id\\n        kind\\n        trust\\n      }\\n    }\\n    findings(limit: 5) {\\n      id\\n      run\\n      severity\\n      code\\n      message\\n      subjectKind\\n      subjectId\\n    }\\n  }\\n  req002: requirement(id: \\\"REQ-002\\\") {\\n    id\\n    kind\\n    trust\\n    edges {\\n      id\\n      kind\\n      direction\\n      from\\n      to\\n      node {\\n        id\\n        kind\\n        trust\\n      }\\n    }\\n    findings(limit: 5) {\\n      id\\n      run\\n      severity\\n      code\\n      message\\n      subjectKind\\n      subjectId\\n    }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-bd4905ae","object":"chat.completion.chunk","created":1789226417,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

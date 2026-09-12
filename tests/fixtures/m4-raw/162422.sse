@@ -1,0 +1,106 @@
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226649,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226651,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nGood"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" progress. Now the gap analysis:\n\n"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Requirements coverage:\n- REQ"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-001: 0 satisfiers"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" (gap!), 13 verifying scenarios."}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n- REQ-002: 4 satisf"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"iers, 1 test.\n- REQ-0"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"03, REQ-011,"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" REQ-034, REQ-035,"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226652,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" REQ-contract-implementation-loop: satisfied"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" by CMP-deterministic-policy-engine.\n- REQ"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-028: CON-cli + SYS-spec"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"ification.\n- REQ-identity: SYS-spec"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"ification + CON-rest.\n- TT-REQ"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-registry: 5 containers.\n- TT"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"-REQ-registry-parts: 21"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226653,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" components.\n\nSo REQ-00"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"1 is the only requirement with no satisfying implementation"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" — notable gap (though it's arguably a"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" meta-requirement).\n\n"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Also REQ-001 has no `"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"derives` (root), and"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 4 children directly + TT-"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"REQ-registry-parts indirectly.\n\nNow continue:"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226654,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" trace structure. Let's look at containers and"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" their contents, plus the tests/scenarios inventory."}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Also check policyBindings, which"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" might be interesting (PolicyBinding type with"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" release/version/rule/state)."}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n\nLet me query:\n1."}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" tests(limit 50)"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" with verifies.\n2. scenarios(limit"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 50) with verifies.\n3."}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226655,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" policyBindings(node: \"SYS-specification\") —"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" or without node to get all"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":".\n4. containers list with satisfies and"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" contains counts.\n\nLet me batch: query 1"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" = tests + scenarios inventory;"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" query 2 = policyBindings (all, limit"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" 200) and containers.\n\n"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Actually policyBindings(node: ID)"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226656,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" optional — call without"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226657,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" node to get all bindings.\n\nLet me"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226657,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" do these two independent calls in one block."}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226657,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226657,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226659,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_151971d1","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Evidence {\\n  tests(limit: 50) {\\n    id\\n    trust\\n    verifies { id }\\n    coverage { file lines covered percent uncovered measuredAt }\\n    findings(limit: 5) { severity code message }\\n  }\\n  scenarios(limit: 50) {\\n    id\\n    trust\\n    verifies { id }\\n    findings(limit: 5) { severity code message }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226659,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n"}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226662,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_881c764f","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Bindings {\\n  policyBindings(limit: 200) {\\n    id\\n    binding\\n    relation\\n    release\\n    version\\n    rule\\n    behavior\\n    severity\\n    state\\n  }\\n  containers(limit: 50) {\\n    id\\n    trust\\n    satisfies { id }\\n    contains {\\n      ... on Component { id }\\n      ... on Container { id }\\n      ... on DrivingAdapter { id }\\n      ... on Organism { id }\\n      ... on Page { id }\\n      ... on RestClient { id }\\n      ... on TypescriptCli { id }\\n      ... on TypescriptWorker { id }\\n      ... on View { id }\\n    }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-5df6d8ce","object":"chat.completion.chunk","created":1789226662,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

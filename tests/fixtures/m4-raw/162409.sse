@@ -1,0 +1,46 @@
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226639,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226641,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nUn"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226641,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"ions need inline fragments. Let me"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226641,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" redo using inline fragments on the"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226641,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" concrete union members.\n\nFor incomingS"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226641,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"atisfies: `... on Component"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" { id kind } ... on Container {"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" id kind } ... on System { id kind } ..."}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" on TypescriptCli { id kind } ... on Typescript"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Worker { id kind }`\n\nFor incoming"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Verifies: `... on Scenario { id kind } ..."}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" on Test { id kind }`\n\nFor contains:"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Component | Container | DrivingAdapter |"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226642,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" Organism | Page | RestClient | Typescript"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226643,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Cli | TypescriptWorker | View.\n\nLet me"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226643,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" write them all.\n"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226643,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226646,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_c2162583","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Coverage($limit: Int!) {\\n  requirements(limit: $limit) {\\n    id\\n    kind\\n    trust\\n    derives { id }\\n    incomingDerives { id }\\n    incomingSatisfies {\\n      ... on Component { id kind }\\n      ... on Container { id kind }\\n      ... on System { id kind }\\n      ... on TypescriptCli { id kind }\\n      ... on TypescriptWorker { id kind }\\n    }\\n    incomingVerifies {\\n      ... on Scenario { id kind }\\n      ... on Test { id kind }\\n    }\\n    findings(limit: 5) { id severity code message subjectId }\\n  }\\n}\", \"variables\": {\"limit\": 50}}"}}]}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226646,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n"}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226649,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_87ff192a","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query Sys {\\n  system(id: \\\"SYS-specification\\\") {\\n    id\\n    kind\\n    trust\\n    binds { ... on Resource { id kind } }\\n    satisfies { id }\\n    contains {\\n      ... on Component { id kind }\\n      ... on Container { id kind }\\n      ... on DrivingAdapter { id kind }\\n      ... on Organism { id kind }\\n      ... on Page { id kind }\\n      ... on RestClient { id kind }\\n      ... on TypescriptCli { id kind }\\n      ... on TypescriptWorker { id kind }\\n      ... on View { id kind }\\n    }\\n    findings(limit: 10) { id severity code message subjectId }\\n    impact(depth: 3) { node edge depth }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-8cc7c75b","object":"chat.completion.chunk","created":1789226649,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

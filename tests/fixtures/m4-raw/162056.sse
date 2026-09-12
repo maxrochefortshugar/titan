@@ -1,0 +1,26 @@
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226445,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226451,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nLet"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226451,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" me expand REQ-"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226451,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"001's full graph. Query"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226451,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" requirement(id: \"REQ-001"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226452,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\") with edges, plus derived requirements, verifiers"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226452,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", satisfiers.\n\nLet me do"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226452,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" a composite query.\n"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226452,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226456,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_9c8c3e2a","type":"function","function":{"name":"query_specification","arguments":"{\"query\": \"query Req001($id: ID!) {\\n  requirement(id: $id) {\\n    id\\n    kind\\n    trust\\n    pointer { system locator revision digest trust }\\n    derives { id kind trust }\\n    incomingDerives { id kind trust }\\n    incomingVerifies {\\n      ... on Scenario { id kind trust verifies { id } }\\n      ... on Test { id kind trust verifies { id } }\\n    }\\n    incomingSatisfies {\\n      ... on System { id kind trust satisfies { id } }\\n      ... on Container { id kind trust satisfies { id } }\\n      ... on Component { id kind trust satisfies { id } }\\n      ... on TypescriptCli { id kind trust satisfies { id } }\\n      ... on TypescriptWorker { id kind trust satisfies { id } }\\n    }\\n    edges { id kind direction from to node { id kind trust } }\\n    impact(depth: 3) { node edge depth }\\n    findings(limit: 20) { id severity code message subjectId }\\n  }\\n}\", \"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"variables\": {\"id\": \"REQ-001\"}}"}}]}}]}
+
+data: {"id":"chatcmpl-d9578142","object":"chat.completion.chunk","created":1789226456,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

@@ -1,0 +1,34 @@
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":0,"model":"keepalive","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226463,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226464,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\nInteresting: SatisfiesSource union"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226464,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" here lists Node, Component, Container"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226464,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":", System, TypescriptCli — no TypescriptWorker"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"? Actually schema said `union S"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"atisfiesSource = Component | Container | System |"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" TypescriptCli | TypescriptWorker"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"`. The error message mentions \"Node\", \""}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"Component\", \"Container\", \"System\", or \""}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"TypescriptCli\" — maybe truncated list. Anyway,"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":" use `... on Node { id kind }`."}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"reasoning_content":"\n"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226465,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"content":"\n\n"}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226468,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1e827993","type":"function","function":{"name":"query_specification","arguments":"{\"baseline\": \"sha256:a15535774795e4a161892664dc903bd60a8ecac704886bf68770fd796b7b702a\", \"query\": \"query ReqTree {\\n  requirements(limit: 100) {\\n    id\\n    trust\\n    derives { id }\\n    incomingDerives { id }\\n    incomingVerifies { ... on Node { id kind } }\\n    incomingSatisfies { ... on Node { id kind } }\\n    findings(limit: 5) { severity code message }\\n  }\\n}\"}"}}]}}]}
+
+data: {"id":"chatcmpl-c2f96b94","object":"chat.completion.chunk","created":1789226468,"model":"Qwen3.8-Flash-Next-oQ4e-mtp","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

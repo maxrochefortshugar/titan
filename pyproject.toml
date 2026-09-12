@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "titan"
+version = "0.0.1"
+description = "An inference engine for agentic coding on Apple Silicon"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = "==3.11.*"
+dependencies = [
+    "mlx==0.32.2",
+    "numpy",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "jinja2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "anyio", "httpx"]
+
+[project.scripts]
+titan = "titan.api.main:main"
+
+[tool.setuptools.packages.find]
+include = ["titan*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "exactness: compares a kernel against its reference implementation",
+    "parity: compares Titan output against oMLX recorded output",
+    "slow: needs a loaded model",
+]
