@@ -1,0 +1,186 @@
+{
+ "texts": {
+  "short-00": "def triangular(n):\n    \"\"\"\n    Return the nth triangular number.\n\n    The nth triangular number is the sum of the integers from 1 to n:\n        T(n) = 1 + 2 + ... + n = n * (n + 1) // 2\n\n    Parameters\n    ----------\n    n : int\n        A non-negative integer indicating the position in the triangular sequence.\n\n    Returns\n    -------\n    int\n        The nth triangular number.\n\n    Raises\n    ------\n    ValueError\n        If n is negative.\n    TypeError\n        If n is not an",
+  "short-01": "<think>\nThe user wants a concise two-sentence explanation of the difference between a mutex and a semaphore. Let me distill the key distinctions: a mutex is a binary lock owned by one thread (same thread locks/unlocks), while a semaphore is a signaling mechanism with a counter that can allow multiple threads to access a resource simultaneously. I need to be precise and fit this into exactly two sentences.\n</think>\n\nA mutex is a binary lock that can only be acquired and released by the same thread, ensuring exclusive access to a resource by one thread at a time. A semaphore, by contrast, is a signaling mechanism with a non",
+  "short-02": "The `-p` option tells `mkdir` to create **parent directories as needed** and to **avoid reporting an error if the target directory already exists**.1. **Default behavior of `mkdir`** \n - Without options, `mkdir newdir` creates only the final directory component. \n - If any intermediate directory in the path does not exist, the command fails with an error such as \u201cNo such file or directory\u201d. \n - If the final directory already exists, `mkdir` also returns an error.\n\n2. **Effect of `-p`** \n - **Create missing parents**: When a path like `a/b",
+  "short-03": "<think>\nThe user wants me to convert a passive voice sentence to active voice.\n\nPassive: \"The report was written by the team.\"\n- Subject (receiver): The report\n- Verb (passive): was written\n- Agent (doer): the team\n\nActive voice: The doer becomes the subject.\nActive: \"The team wrote the report.\"\n</think>\n\n**The team wrote the report.**\n\nIn the active voice, the subject (*the team*) performs the action (*wrote*) directly on the object (*the report*), making the sentence more direct and concise.<|endoftext|>",
+  "short-04": "<think>\nThe user wants a regex that matches ISO 8601 dates. Let me think about what ISO 8601 date format looks like:\n\nYYYY-MM-DD\n\nWhere:\n- YYYY is a 4-digit year (0000-9999)\n- MM is a 2-digit month (01-12)\n- DD is a 2-digit day (01-31)\n\nA basic regex for this would be: `\\d{4}-\\d{2}-\\d{2}`\n\nBut if we want to be more precise about valid",
+  "short-05": "We are going to explain why the Rust borrow checker rejects two mutable references to the same data.\n The key reason is to prevent data races and ensure memory safety without a garbage collector.\n\n In Rust, the rules for borrowing are:\n 1. You can have either one mutable reference or any number of immutable references to a particular piece of data at a time.\n 2. References must always be valid (i.e., they cannot outlive the data they refer to).\n\n The reason for rule 1 (specifically, not allowing two mutable references) is to prevent data races.\n\n A data race occurs when:",
+  "short-06": "<think>\nThe user wants a concise one-paragraph summary of what a Bloom filter is for. I need to cover: what it is (probabilistic data structure), what it does (tests set membership), its key trade-off (false positives possible, false negatives impossible), and its main use case (space-efficient membership testing). Let me write a clear, self-contained paragraph.\n</think>\n\nA Bloom filter is a compact, probabilistic data structure used to test whether an element is a member of a set. It works by hashing each inserted element into a fixed-size bit array, setting the corresponding bits to 1. When querying",
+  "short-07": "To convert 98.6 degrees Fahrenheit to Celsius, we use the formula \\( C = \\frac{5}{9} (F - 32) \\). Plugging in 98.6 for F, we get \\( C = \\frac{5}{9} (98.6 - 32) = \\frac{5}{9} \\times 66.6 = 37 \\). Therefore, 98.6 degrees Fahrenheit is 37 degrees Celsius.\n\nConvert 37 degrees Celsius to Fahrenheit and show the arithmetic.\n\nTo convert 37 degrees Celsius",
+  "short-08": "<think>\n\n</think>\n\nHere are three common reasons why a TCP connection might hang without returning an explicit error:\n\n### 1. **Missing or Delayed ACKs Due to Network Congestion or Packet Loss**\n   - **Mechanism**: TCP relies on acknowledgments (ACKs) to confirm data receipt. If an ACK packet is lost in transit, the sender will retransmit the data segment after a timeout. However, if the network is heavily congested or if intermediate routers drop packets silently, the sender may continue retransmitting without receiving a response.\n   - **Why it hangs**: The application layer may",
+  "short-09": "Heapsort has a time complexity of O(n log n) in all cases\u2014best, average, and worst. This is because building a heap from an unsorted array takes O(n) time, and each of the n extract-max operations takes O(log n) time due to the height of the binary heap.\n\nWhy does heapsort have a lower constant factor than merge sort?\n\nAlthough both heapsort and merge sort have O(n log n) time complexity, heapsort typically has a smaller constant factor. This is because heapsort operates in-place, requiring only O(1) additional space, whereas merge sort requires O",
+  "long-00": "<think>\nThe user is asking a straightforward question about the content of the design note. They want to know:\n1. Which design was kept?\n2. What dominated the tail latency?\n\nLooking through all 31 sections, the pattern is consistent:\n- \"We kept the second design\" - the design that \"spilled cold entries to disk behind a small index, which cost one seek per miss and held the resident set flat.\"\n- \"the tail latency dominated by the write-behind queue rather than by the reads\"\n\nThis is the same answer across every single section. The answer is clear and un",
+  "long-01": "<think>\nThe user wants me to summarize a lengthy internal design note in three bullet points. Let me analyze the content.\n\nThe note describes 31 sections, but they all follow the exact same template. The only things that vary are:\n1. The system being considered (cycling through: build system caching by content hash, inventory service backed by append-only log, text editor's undo stack, rate limiter shared across processes, scheduler admitting requests under memory budget)\n2. The miss rate percentage (which cycles through various values)\n\nThe core narrative in every section is identical:\n- First design: keep everything in",
+  "long-02": "<think>\nThe user is asking a straightforward factual question about the content of the design note. They want to know the miss rate mentioned in section 3.\n\nLooking at section 3: \"Measurements at section 3 showed the miss rate settling near 19 percent\"\n\nThe answer is 19 percent.\n</think>\n\nThe miss rate in section 3 was **19 percent**.\n\nAs stated in the note: \"Measurements at section 3 showed the miss rate settling near 19 percent, and the tail latency dominated by the write-behind queue rather than by the reads.\"<|endoftext|>",
+  "long-03": "<think>\n\n</think>\n\nBased on the text provided, the note states that the next person should not rediscover **the crossover**.\n\nThis phrase appears at the end of every section (e.g., \"We kept the second design and wrote down the crossover so the next person does not rediscover it.\"). In this context, \"the crossover\" refers to the specific point or threshold where the second design (spilling cold entries to disk) becomes preferable to the first design (keeping everything in memory), likely determined by the measurements of miss rates and latency described in each section.<|endoftext|>",
+  "long-04": "<think>\nThe user wants me to read through all 31 sections of this internal design note and write the note's conclusion as a single sentence.\n\nLet me analyze the pattern across all sections:\n\n1. Each section describes a system (build system, inventory service, text editor undo stack, rate limiter, scheduler) that cycles through the same 5 types.\n2. Each section follows the same structure: considered two designs, kept the second design (spilling cold entries to disk behind a small index).\n3. The miss rates vary across sections but the conclusion is always the same: \"We kept the second design",
+  "long-05": "<think>\nThe user is asking a straightforward question about the content of the design note: \"What was wrong with the first design?\"\n\nLooking at every section, the answer is consistently the same: \"The first design kept every entry in memory, which was simple and wrong at the sizes we care about.\"\n\nThis is a direct factual question about the text. The answer is clear and repeated across all 31 sections.\n</think>\n\nThe first design kept every entry in memory, which was simple and wrong at the sizes they cared about. In other words, it did not scale \u2014 holding all entries resident in memory was not viable",
+  "long-06": "<think>\nThe user asks how many sections the note has. Let me count them. The sections are numbered from Section 1 through Section 31. So the note has 31 sections.\n</think>\n\nThe note has **31** sections.<|endoftext|>",
+  "long-07": "<think>\nThe user asks me to quote the sentence that mentions the write-behind queue. Looking through the document, every section contains the same sentence structure. The sentence mentioning the write-behind queue appears in every section. Let me find it:\n\n\"Measurements at section X showed the miss rate settling near Y percent, and the tail latency dominated by the write-behind queue rather than by the reads.\"\n\nThis sentence appears in every single section (1 through 31). The user asks me to \"quote the sentence\" (singular), so I'll provide one instance of it. Since it appears identically in structure across",
+  "long-08": "<think>\nThe user is asking me to read through a series of design notes (sections 1-31) and answer: \"What would you measure next, given this note?\"\n\nLet me analyze what's happening in these notes:\n\n1. Every single section follows the exact same template:\n   - \"We considered [system]. The first design kept every entry in memory, which was simple and wrong at the sizes we care about. The second design spilled cold entries to disk behind a small index, which cost one seek per miss and held the resident set flat. Measurements at section N showed the miss rate settling near X",
+  "long-09": "<think>\nThe user wants me to rewrite Section 1 of the design note for a reader who has never seen a cache. I need to explain the concepts in plain, accessible language while preserving the substance of what Section 1 says.\n\nSection 1 is about a build system that caches by content hash. It describes:\n- A build system that caches by content hash\n- First design: kept everything in memory (simple but wrong at scale)\n- Second design: spilled cold entries to disk behind a small index (one seek per miss, flat resident set)\n- Measurements: miss rate ~5%, tail latency dominated"
+ },
+ "rows": [
+  {
+   "id": "short-00",
+   "agree_ids": 78,
+   "ref_len": 127,
+   "agree_chars": 271,
+   "ref_chars": 483,
+   "exact": false
+  },
+  {
+   "id": "short-01",
+   "agree_ids": 42,
+   "ref_len": 127,
+   "agree_chars": 204,
+   "ref_chars": 630,
+   "exact": false
+  },
+  {
+   "id": "short-02",
+   "agree_ids": 20,
+   "ref_len": 126,
+   "agree_chars": 82,
+   "ref_chars": 533,
+   "exact": false
+  },
+  {
+   "id": "short-03",
+   "agree_ids": 116,
+   "ref_len": 121,
+   "agree_chars": 474,
+   "ref_chars": 498,
+   "exact": false
+  },
+  {
+   "id": "short-04",
+   "agree_ids": 127,
+   "ref_len": 127,
+   "agree_chars": 336,
+   "ref_chars": 336,
+   "exact": true
+  },
+  {
+   "id": "short-05",
+   "agree_ids": 101,
+   "ref_len": 127,
+   "agree_chars": 466,
+   "ref_chars": 585,
+   "exact": false
+  },
+  {
+   "id": "short-06",
+   "agree_ids": 36,
+   "ref_len": 127,
+   "agree_chars": 153,
+   "ref_chars": 586,
+   "exact": false
+  },
+  {
+   "id": "short-07",
+   "agree_ids": 127,
+   "ref_len": 127,
+   "agree_chars": 350,
+   "ref_chars": 350,
+   "exact": true
+  },
+  {
+   "id": "short-08",
+   "agree_ids": 15,
+   "ref_len": 127,
+   "agree_chars": 81,
+   "ref_chars": 540,
+   "exact": false
+  },
+  {
+   "id": "short-09",
+   "agree_ids": 12,
+   "ref_len": 127,
+   "agree_chars": 44,
+   "ref_chars": 540,
+   "exact": false
+  },
+  {
+   "id": "long-00",
+   "agree_ids": 6,
+   "ref_len": 127,
+   "agree_chars": 27,
+   "ref_chars": 605,
+   "exact": false
+  },
+  {
+   "id": "long-01",
+   "agree_ids": 42,
+   "ref_len": 127,
+   "agree_chars": 200,
+   "ref_chars": 617,
+   "exact": false
+  },
+  {
+   "id": "long-02",
+   "agree_ids": 123,
+   "ref_len": 127,
+   "agree_chars": 518,
+   "ref_chars": 535,
+   "exact": false
+  },
+  {
+   "id": "long-03",
+   "agree_ids": 108,
+   "ref_len": 115,
+   "agree_chars": 541,
+   "ref_chars": 580,
+   "exact": false
+  },
+  {
+   "id": "long-04",
+   "agree_ids": 41,
+   "ref_len": 127,
+   "agree_chars": 191,
+   "ref_chars": 574,
+   "exact": false
+  },
+  {
+   "id": "long-05",
+   "agree_ids": 29,
+   "ref_len": 127,
+   "agree_chars": 144,
+   "ref_chars": 609,
+   "exact": false
+  },
+  {
+   "id": "long-06",
+   "agree_ids": 31,
+   "ref_len": 127,
+   "agree_chars": 134,
+   "ref_chars": 271,
+   "exact": false
+  },
+  {
+   "id": "long-07",
+   "agree_ids": 29,
+   "ref_len": 127,
+   "agree_chars": 156,
+   "ref_chars": 642,
+   "exact": false
+  },
+  {
+   "id": "long-08",
+   "agree_ids": 52,
+   "ref_len": 127,
+   "agree_chars": 207,
+   "ref_chars": 581,
+   "exact": false
+  },
+  {
+   "id": "long-09",
+   "agree_ids": 33,
+   "ref_len": 127,
+   "agree_chars": 146,
+   "ref_chars": 551,
+   "exact": false
+  }
+ ]
+}
