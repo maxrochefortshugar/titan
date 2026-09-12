@@ -48,14 +48,23 @@ lease  = cache.reserve(match)             # pins the blocks against eviction
 n      = cache.restore(match, state)      # bytes in, n <= match.matched_tokens
 ends   = cache.plan_chunks(n, len(tokens), contended)
 snaps  = cache.snapshot_boundaries(n, len(tokens), contended)
+writer = cache.begin_store()              # incremental, one per sequence
 for end in ends:                          # one chunk per scheduler turn
     backend.prefill(state, tokens[pos:end],
                     want_logits=(end == len(tokens)),
                     snapshot=(end in snaps))
-...decode...
+    if end in snaps:
+        writer.note_boundary(end)
+    writer.pump(tokens, state, force_one=True)
+...decode, pumping each cycle...
 cache.store(full_tokens, state, snaps)    # or cache.commit, the same call
 cache.release(lease)
 ```
+
+The session is what keeps the store off the retirement turn. Without one,
+``store`` serialises every boundary in a single call: 32 snapshots and 5.49 GB
+took 15.4 s of loop thread on the measured 65k request, and the request behind
+it decoded at 25 tok/s instead of 55 for the duration.
 
 ``restore`` may return fewer tokens than the match promised if a block went
 missing between the lookup and the read. The planner takes its return value,
@@ -70,7 +79,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 from titan.core.types import BlockHash, PrefixMatch, StateHandle
 
@@ -80,7 +89,7 @@ from titan.adapters.cache.store import TwoTierStateStore
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["PrefixLease", "PrefixStats", "BlockPrefixCache"]
+__all__ = ["PrefixLease", "PrefixStats", "PrefixWriteSession", "BlockPrefixCache"]
 
 
 @dataclass
@@ -146,9 +155,179 @@ class PrefixStats:
     are the ones that pay for the fine tail."""
     chain_truncations: int = 0
     leases_open: int = 0
+    store_seconds: float = 0.0
+    """Loop-thread seconds spent serialising, summed over every pump."""
+    max_store_stall_s: float = 0.0
+    """The longest a single pump held the loop thread. This is the number the
+    integration report measured at 1.50 s against a 50 ms cap, and the one the
+    budget exists to hold down."""
+    store_pumps: int = 0
+    snapshots_deferred: int = 0
+    """Pumps that stopped with work still queued because the next boundary did
+    not fit the remaining budget. Deferred, not dropped: the work happens on a
+    later cycle or in the post-retirement drain."""
+    drain_snapshots: int = 0
+    """Boundaries serialised after the sequence retired."""
+    boundaries_abandoned: int = 0
+    """Boundaries dropped because the drain ran out of its own budget. The
+    chain truncates to the deepest snapshot that did commit."""
 
     def as_mapping(self) -> dict[str, float]:
         return {f"prefix.{name}": float(value) for name, value in vars(self).items()}
+
+
+class PrefixWriteSession:
+    """One sequence's store, spread over the cycles the sequence lives for.
+
+    The engine used to hand the cache a finished prompt and a list of
+    boundaries, and the cache serialised all of them in one call on the
+    scheduler loop thread. On a 65k-token request that is 32 snapshots and
+    5.49 GB, and the integration report timed it at 15.4 s, during which the
+    next request decoded at 25 tok/s instead of 55.
+
+    A session turns that burst into a stream. Each boundary is serialised when
+    it is reached, or on a later cycle if the loop is busy, and retirement is
+    left with the tail nobody had time for rather than the whole prompt.
+
+    What runs where, per boundary:
+
+    * loop thread: one ``export_snapshot`` and one ``export_blocks`` per new
+      block, which is an ``mx.eval`` of the staged slice and a copy of it into
+      ``bytes``, plus the sha256 chain hash of the block's token ids;
+    * writer thread: the record framing and its crc32, and the file write.
+
+    The chain hash stays on the loop thread on purpose. It is sha256 over 512
+    token ids, about 20 microseconds a block against tens of milliseconds for
+    the copy, and moving it would mean the index that ``lookup`` reads is
+    behind the bytes the store already holds.
+
+    Not thread safe. One session belongs to one sequence and is only ever
+    touched by the loop thread that owns it.
+    """
+
+    def __init__(
+        self,
+        cache: "BlockPrefixCache",
+        *,
+        budget_s: float,
+        clock: Callable[[], float],
+    ) -> None:
+        self._cache = cache
+        self._budget_s = float(budget_s)
+        self._clock = clock
+        self._queued: list[int] = []
+        self._served: set[int] = set()
+        self._chain: list[bytes] = []
+        self._next_block = 0
+        self._deepest = 0
+        self._draining = False
+        self._unit_s = 0.0
+        """Exponential mean of what one boundary costs the loop thread. The
+        budget is spent against this rather than against a fixed count,
+        because a boundary is 40 ms on a 4k prompt and 400 on a 64k one."""
+
+    # -- properties --------------------------------------------------------
+    @property
+    def pending(self) -> int:
+        """Boundaries reached but not yet serialised."""
+        return len(self._queued)
+
+    @property
+    def deepest_committed(self) -> int:
+        return self._deepest
+
+    @property
+    def unit_estimate_s(self) -> float:
+        return self._unit_s
+
+    # -- driving -----------------------------------------------------------
+    def note_boundary(self, length: int) -> None:
+        """Record that the backend staged a snapshot at ``length``.
+
+        Cheap by design: the scheduler calls it from the prefill stage, and
+        anything expensive here would be the burst again, one chunk at a time.
+        """
+        block = self._cache.block_tokens
+        rounded = (int(length) // block) * block
+        if rounded <= 0 or rounded in self._served or rounded in self._queued:
+            return
+        self._queued.append(rounded)
+        self._queued.sort()
+
+    def begin_drain(self) -> None:
+        """Mark the sequence retired. Only changes what the pumps are counted
+        as, so a drain that is doing real work is visible in ``/metrics``."""
+        self._draining = True
+
+    def pump(
+        self,
+        tokens: Sequence[int],
+        state: StateHandle,
+        *,
+        budget_s: float | None = None,
+        force_one: bool = False,
+    ) -> float:
+        """Serialise what fits in the budget. Returns seconds spent.
+
+        The gate is ``spent + estimate > budget``, so a boundary is only
+        started when the measured cost of the last one says it will fit. A
+        pump that would overrun stops instead and leaves the rest queued,
+        which is the whole enforcement of the cap: the loop thread cannot be
+        preempted once inside ``export_snapshot``, so the only lever is not
+        entering it.
+
+        ``force_one`` runs one boundary whatever the estimate says. The
+        post-retirement drain sets it, because a drain that defers forever is
+        a state handle that never closes.
+        """
+        budget = self._budget_s if budget_s is None else float(budget_s)
+        started = self._clock()
+        spent = 0.0
+        did_one = False
+        while self._queued:
+            if not (force_one and not did_one) and spent + self._unit_s > budget:
+                self._cache.counters.snapshots_deferred += 1
+                break
+            length = self._queued[0]
+            if length > len(tokens):
+                # The boundary is past what the caller can name yet. It will
+                # be serialisable on a later pump, or dropped at finish.
+                break
+            unit_started = self._clock()
+            self._cache._serialise_boundary(self, tokens, state, length)
+            elapsed = self._clock() - unit_started
+            self._unit_s = elapsed if self._unit_s == 0.0 else (
+                0.5 * self._unit_s + 0.5 * elapsed
+            )
+            self._queued.pop(0)
+            self._served.add(length)
+            if self._draining:
+                self._cache.counters.drain_snapshots += 1
+            did_one = True
+            spent = self._clock() - started
+        spent = self._clock() - started
+        counters = self._cache.counters
+        counters.store_pumps += 1
+        counters.store_seconds += spent
+        counters.max_store_stall_s = max(counters.max_store_stall_s, spent)
+        return spent
+
+    def finish(self, tokens: Sequence[int], total: int) -> None:
+        """Close the chain out. Counts a truncation if it is short.
+
+        Called once the last boundary is serialised, whether that happened on
+        a prefill cycle or in the drain.
+        """
+        block = self._cache.block_tokens
+        full_blocks = min(len(tokens), total) // block
+        if full_blocks and self._deepest // block < full_blocks:
+            self._cache.counters.chain_truncations += 1
+
+    def abandon(self) -> None:
+        """Give up on the boundaries still queued and count them."""
+        if self._queued:
+            self._cache.counters.boundaries_abandoned += len(self._queued)
+            self._queued.clear()
 
 
 class BlockPrefixCache:
@@ -178,6 +357,7 @@ class BlockPrefixCache:
         contended_chunk_tokens: int = 512,
         fine_min_gain_tokens: int = 384,
         fine_max_pending_bytes: int = 192 * 1024**2,
+        store_budget_s: float = 0.020,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if block_tokens <= 0:
@@ -195,6 +375,7 @@ class BlockPrefixCache:
         self._contended_chunk = int(contended_chunk_tokens)
         self._fine_min_gain = int(fine_min_gain_tokens)
         self._fine_max_pending = int(fine_max_pending_bytes)
+        self._store_budget_s = max(float(store_budget_s), 0.0)
         self._clock = clock
         self._signature_digest = codec.signature.digest()
 
@@ -214,6 +395,16 @@ class BlockPrefixCache:
     @property
     def snapshot_grid(self) -> int:
         return self._grid
+
+    @property
+    def store_budget_s(self) -> float:
+        """Loop-thread seconds one sequence's store may spend per cycle.
+
+        Read by the scheduler, which owns the loop and does the pumping. It
+        lives here because ``cache.store_budget_ms`` is a cache setting and
+        the engine may not import the config.
+        """
+        return self._store_budget_s
 
     # -- lookup ------------------------------------------------------------
     def lookup(self, tokens: Sequence[int]) -> PrefixMatch:
@@ -393,6 +584,19 @@ class BlockPrefixCache:
             return snapshot_length
 
     # -- store -------------------------------------------------------------
+    def begin_store(self, *, budget_s: float | None = None) -> PrefixWriteSession:
+        """Open an incremental store for one sequence.
+
+        The engine opens one at admission, tells it about each boundary as
+        prefill reaches it, and pumps it once per cycle. What is left at
+        retirement is the tail, not the prompt.
+        """
+        return PrefixWriteSession(
+            self,
+            budget_s=self._store_budget_s if budget_s is None else budget_s,
+            clock=self._clock,
+        )
+
     def store(
         self,
         tokens: Sequence[int],
@@ -400,6 +604,11 @@ class BlockPrefixCache:
         boundaries: Sequence[int],
     ) -> None:
         """Persist ``tokens`` with resumable points at ``boundaries``.
+
+        The one-shot form, and now a special case of the incremental one: a
+        session with no budget, told about every boundary at once. A caller
+        that can afford to block the thread it is on -- a test, a bench, an
+        engine with no session -- gets exactly the old behaviour.
 
         Boundaries are rounded down to the block grid, because a restore point
         has to be a block end: the KV either covers whole blocks or the chain
@@ -413,26 +622,42 @@ class BlockPrefixCache:
         unusable on the next turn, and recording it would let a lookup report a
         length it cannot restore.
         """
+        total = len(tokens)
+        cap = (total // self._block) * self._block
+        if cap == 0:
+            return
+        session = self.begin_store(budget_s=float("inf"))
+        for value in boundaries:
+            session.note_boundary(min(int(value), cap))
+        session.pump(tokens, state, budget_s=float("inf"))
+        session.finish(tokens, total)
+
+    # -- the incremental path ----------------------------------------------
+    def _serialise_boundary(
+        self,
+        session: PrefixWriteSession,
+        tokens: Sequence[int],
+        state: StateHandle,
+        length: int,
+    ) -> bool:
+        """One boundary: its snapshot, then the blocks it makes reachable.
+
+        This is the only method the loop thread spends real time in, and every
+        millisecond of it is a codec call. Ordering is the store's third rule
+        stated per boundary rather than per prompt: the snapshot first, its
+        blocks second, and no block published past a snapshot that did not
+        commit.
+        """
         with self._lock:
-            total = len(tokens)
-            full_blocks = total // self._block
-            if full_blocks == 0:
-                return
-
-            chain = self._chain_for(tokens, full_blocks)
-            wanted = self._boundaries_to_store(boundaries, full_blocks)
-
-            deepest = 0
-            for length in wanted:
-                digest = chain[length // self._block - 1]
-                snapshot_id = snapshot_id_for(digest, length)
-                if (
-                    digest in self._snapshots
-                    and self._store.contains_snapshot(snapshot_id)
-                ):
-                    self.counters.snapshots_deduped += 1
-                    deepest = max(deepest, length)
-                    continue
+            blocks = length // self._block
+            if blocks == 0 or blocks * self._block > len(tokens):
+                return False
+            chain = self._chain_upto(session, tokens, blocks)
+            digest = chain[blocks - 1]
+            snapshot_id = snapshot_id_for(digest, length)
+            if digest in self._snapshots and self._store.contains_snapshot(snapshot_id):
+                self.counters.snapshots_deduped += 1
+            else:
                 started = self._clock()
                 try:
                     blob = self._codec.export_snapshot(state, length)
@@ -443,7 +668,7 @@ class BlockPrefixCache:
                     # reasons it was.
                     logger.warning("snapshot at %d did not commit: %s", length, exc)
                     self.counters.snapshots_failed += 1
-                    continue
+                    return False
                 self._store.put_snapshot(snapshot_id, blob)
                 self.counters.snapshots_written += 1
                 if length % self._grid:
@@ -456,43 +681,81 @@ class BlockPrefixCache:
                 )
                 self._snapshots[digest] = entry
                 self._snapshot_ids[snapshot_id] = entry
-                deepest = max(deepest, length)
+            if not self._write_blocks(session, chain, state, blocks):
+                return False
+            session._deepest = max(session._deepest, length)
+            return True
 
-            keep = deepest // self._block
-            if keep < full_blocks:
-                self.counters.chain_truncations += 1
-            now = self._clock()
-            parent: Optional[bytes] = None
-            for index in range(keep):
-                digest = chain[index]
-                start = index * self._block
-                if digest in self._index and self._store.contains(BlockHash(digest)):
-                    self._index[digest].last_access = now
-                    self.counters.blocks_deduped += 1
-                    parent = digest
-                    continue
-                try:
-                    payload = self._codec.export_blocks(
-                        state, start, start + self._block
-                    )
-                except Exception as exc:  # noqa: BLE001 - the chain, not a turn
-                    logger.warning(
-                        "block [%d, %d) did not export: %s",
-                        start,
-                        start + self._block,
-                        exc,
-                    )
-                    self.counters.chain_truncations += 1
-                    break
-                self._store.put_block(BlockHash(digest), payload)
-                self._index[digest] = _BlockEntry(
-                    hash=digest,
-                    index=index,
-                    parent=parent,
-                    last_access=now,
-                )
-                self.counters.blocks_written += 1
+    def _write_blocks(
+        self,
+        session: PrefixWriteSession,
+        chain: Sequence[bytes],
+        state: StateHandle,
+        upto: int,
+    ) -> bool:
+        """Export and index blocks ``[session._next_block, upto)``.
+
+        Each block is exported once per process, whichever boundary first
+        reaches it, so a 65k prompt with 32 boundaries still exports its 128
+        blocks 128 times and not 4096.
+        """
+        now = self._clock()
+        parent = chain[session._next_block - 1] if session._next_block else None
+        for index in range(session._next_block, upto):
+            digest = chain[index]
+            start = index * self._block
+            if digest in self._index and self._store.contains(BlockHash(digest)):
+                self._index[digest].last_access = now
+                self.counters.blocks_deduped += 1
                 parent = digest
+                session._next_block = index + 1
+                continue
+            try:
+                payload = self._codec.export_blocks(state, start, start + self._block)
+            except Exception as exc:  # noqa: BLE001 - the chain, not a turn
+                logger.warning(
+                    "block [%d, %d) did not export: %s",
+                    start,
+                    start + self._block,
+                    exc,
+                )
+                self.counters.chain_truncations += 1
+                return False
+            self._store.put_block(BlockHash(digest), payload)
+            self._index[digest] = _BlockEntry(
+                hash=digest,
+                index=index,
+                parent=parent,
+                last_access=now,
+            )
+            self.counters.blocks_written += 1
+            parent = digest
+            session._next_block = index + 1
+        return True
+
+    def _chain_upto(
+        self,
+        session: PrefixWriteSession,
+        tokens: Sequence[int],
+        blocks: int,
+    ) -> list[bytes]:
+        """Extend the session's chain hashes to ``blocks``, reusing the rest.
+
+        A block's digest depends only on the tokens before it, so a session
+        that hashed 48 blocks at one boundary hashes 4 more at the next rather
+        than all 52 again.
+        """
+        chain = session._chain
+        parent = chain[-1] if chain else None
+        for index in range(len(chain), blocks):
+            start = index * self._block
+            parent = chain_hash(
+                parent,
+                tokens[start : start + self._block],
+                self._signature_digest,
+            )
+            chain.append(parent)
+        return chain
 
     commit = store
     """The engine's name for :meth:`store`. Same call, same semantics."""
@@ -621,37 +884,5 @@ class BlockPrefixCache:
             return len(dead)
 
     # -- internals ---------------------------------------------------------
-    def _chain_for(self, tokens: Sequence[int], blocks: int) -> list[bytes]:
-        chain: list[bytes] = []
-        parent: Optional[bytes] = None
-        for index in range(blocks):
-            start = index * self._block
-            parent = chain_hash(
-                parent,
-                tokens[start : start + self._block],
-                self._signature_digest,
-            )
-            chain.append(parent)
-        return chain
-
-    def _boundaries_to_store(
-        self,
-        boundaries: Iterable[int],
-        full_blocks: int,
-    ) -> list[int]:
-        """Round to the block grid, clamp to what the blocks cover, dedup.
-
-        A caller that passes the raw prompt length gets the floor of it, which
-        is exactly what the prompt-end policy wants and saves the engine from
-        having to know the block size.
-        """
-        cap = full_blocks * self._block
-        lengths = set()
-        for value in boundaries:
-            length = min(int(value), cap) // self._block * self._block
-            if length > 0:
-                lengths.add(length)
-        return sorted(lengths)
-
     def _snapshot_by_id(self, snapshot_id: str) -> Optional[_SnapshotEntry]:
         return self._snapshot_ids.get(snapshot_id)

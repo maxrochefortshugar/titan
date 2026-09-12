@@ -313,9 +313,19 @@ def test_template_kwargs_may_not_shadow_a_real_field():
         load(MINIMAL + "\n[model.aliases.x.template_kwargs]\nenable_thinking = false\n")
 
 
-def test_fine_tail_blocks_must_be_at_least_one():
-    with pytest.raises(ConfigError, match="cache.fine_tail_blocks"):
-        load(MINIMAL + "\n[cache]\nfine_tail_blocks = 0\n")
+def test_fine_min_gain_tokens_must_be_at_least_one():
+    """The fine-tail gate is a token count now, and it is read by wiring.
+
+    It replaced ``fine_tail_blocks``, which was validated here and used by
+    nothing: the cache took its threshold from a constant in wiring instead.
+    """
+    with pytest.raises(ConfigError, match="cache.fine_min_gain_tokens"):
+        load(MINIMAL + "\n[cache]\nfine_min_gain_tokens = 0\n")
+
+
+def test_fine_min_gain_tokens_reaches_the_cache():
+    config = load(MINIMAL + "\n[cache]\nfine_min_gain_tokens = 777\n")
+    assert config.cache.fine_min_gain_tokens == 777
 
 
 def test_positive_numbers_are_checked_across_the_sections():

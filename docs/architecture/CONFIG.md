@@ -132,12 +132,19 @@ past a stop token.
 | `snapshot_grid` | 2048 | where recurrent snapshots are always staged; must be a multiple of `block_tokens` |
 | `snapshot_at_prompt_end` | true | always snapshot where the prompt ends |
 | `fine_tail` | true | cut the uncached suffix on the fine grid near its end |
-| `fine_tail_blocks` | 4 | how many blocks the fine cut covers |
+| `fine_min_gain_tokens` | 384 | tokens the prompt-end cut must buy back before it is worth its own chunk launch and snapshot |
 | `ram_tier_mb` | 4096 | hot tier; 4 GB measured the same hit rate as 16 GB with far less pressure |
 | `ssd_dir` | `""` | empty means RAM only, which is a legitimate choice on a machine whose disk is busy with the n-gram table |
 | `ssd_capacity_gb` | 200 | |
-| `max_stall_ms` | 50 | hard cap on how long a store may block the scheduler thread |
-| `pending_write_budget_mb` | 512 | |
+| `max_stall_ms` | 50 | hard cap on loop-thread milliseconds one sequence's store may spend in a cycle |
+| `pending_write_budget_mb` | 512 | bytes-aware bound on the write queue; over it the queue sheds the oldest unpinned entry |
+
+`fine_min_gain_tokens` used to be `fine_tail_blocks`, a block count that was
+validated at startup and read by nothing. `max_stall_ms` used to bound how long
+a single put would wait for queue room, which is not the same thing as bounding
+the loop: a retirement made thirty-two puts and the integration report measured
+1.50 s of stall against the 50 ms cap. It is a serialisation budget now, spent
+per sequence per cycle, and the write queue no longer waits at all.
 
 The two grids are decoupled deliberately. Reconstruction is bytes-bound at about
 2.77e-3 ms per token, so 48 blocks of 512 cost what 12 of 2048 cost: block count

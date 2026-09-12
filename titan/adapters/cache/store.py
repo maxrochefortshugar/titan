@@ -2,13 +2,17 @@
 
 Hot RAM tier at 4 GB, measured to hold the same hit rate as 16 GB with far less
 memory pressure, in front of an SSD tier. Writes go through a background
-thread; the scheduler thread never waits longer than ``cache.max_stall_ms``.
+thread, and a put never waits on it at all.
 
 The stall bound is a lesson, not a preference. The overlay's writer could hold
 the inference thread for up to two seconds waiting on a pending-bytes budget,
 and that turned a follow-up turn immediately after a large store into a 2.69 s
-turn where the model itself needed 1.7. Under backpressure Titan drops the
-optional fine snapshot instead of waiting for the queue.
+turn where the model itself needed 1.7. Titan's first answer to that was a
+50 ms cap on the same wait, and the integration report shows what a per-put cap
+is worth when a retirement makes thirty-two puts back to back: ``max_stall_s``
+came out at 1.50 s. So the wait is gone. A put that does not fit the byte
+budget sheds the oldest unpinned entry in the queue, and if that is not enough
+it drops itself, keeps the payload in RAM and counts the lost durability.
 
 How the two tiers divide the work:
 
@@ -84,14 +88,29 @@ class StoreStats:
     take this path, and it is why sharing does not double-store."""
     bytes_written: int = 0
     writes_dropped: int = 0
-    """Writes abandoned because the queue was full for longer than the stall
-    bound. The record stays in RAM; only its durability is lost."""
+    """Writes abandoned because the queue had no room for them. The record
+    stays in RAM; only its durability is lost."""
+    dropped_bytes: int = 0
+    """Payload bytes in those dropped writes, so a drop count can be read
+    against the size of what was lost."""
+    queue_evictions: int = 0
+    """Queued writes thrown out to make room for a newer one. The oldest
+    unpinned entry goes first: a record no lease needs is the cheapest thing
+    in the queue to lose."""
+    pending_peak_bytes: int = 0
+    """High-water mark of the write queue. Size the budget against this."""
     write_errors: int = 0
     hot_evictions: int = 0
     ssd_evictions: int = 0
     corrupt_skipped: int = 0
     signature_rejected: int = 0
     max_stall_s: float = 0.0
+    """The longest a single put held the calling thread. The put path no
+    longer waits on anything, so this is a dictionary insert plus a queue
+    append and it should stay in the microseconds. It is kept because it is
+    the number the report caught at 1.50 s against a 50 ms cap."""
+    stall_cap_exceeded: int = 0
+    """Puts that took longer than ``cache.max_stall_ms``. Should be zero."""
 
     def as_mapping(self) -> dict[str, float]:
         return {f"store.{name}": float(value) for name, value in vars(self).items()}
@@ -114,13 +133,23 @@ class _DiskEntry:
 
 @dataclass
 class _PendingWrite:
+    """One queued write, still unframed.
+
+    The payload is the bytes the codec produced; the record wrapper, with its
+    JSON header and its crc32 over the whole payload, is built on the writer
+    thread. Framing a 171 MB snapshot copies it once and checksums it once,
+    which is 40 ms of the caller's thread for nothing the caller needs.
+    """
+
     path: str
-    record: bytes
+    payload: bytes
     cache_key: str
+    kind: str
+    tokens: int
     size: int = field(init=False)
 
     def __post_init__(self) -> None:
-        self.size = len(self.record)
+        self.size = len(self.payload)
 
 
 class TwoTierStateStore:
@@ -279,11 +308,18 @@ class TwoTierStateStore:
                 return "ram"
             return "ssd"
 
+    def queue_depth(self) -> int:
+        """Records queued but not yet written, including none in flight."""
+        with self._lock:
+            return len(self._queue)
+
     def metrics(self) -> Mapping[str, float]:
         values = self.stats.as_mapping()
         values["store.hot_bytes"] = float(self.hot_bytes())
         values["store.disk_bytes"] = float(self.disk_bytes())
         values["store.pending_bytes"] = float(self.pending_bytes())
+        values["store.queue_depth"] = float(self.queue_depth())
+        values["store.pending_budget_bytes"] = float(self._pending_budget)
         return values
 
     # -- internals ---------------------------------------------------------
@@ -350,55 +386,98 @@ class TwoTierStateStore:
         return payload
 
     def _put(self, key: str, payload: bytes, *, kind: str, tokens: int) -> None:
+        """Take ownership of one payload. Never waits on the writer.
+
+        The whole call is a dictionary insert into the hot tier and an append
+        to the write queue. Nothing here frames a record, checksums a payload
+        or touches the disk, and nothing here blocks: the old version waited
+        up to ``max_stall_ms`` for queue room and the integration report caught
+        it holding the loop for 1.50 s against a 50 ms cap, because the wait
+        was per put and thirty-two puts arrived at once.
+
+        Over budget the queue sheds instead of stalling. Durability is the
+        thing given up, never the loop.
+        """
         started = self._clock()
-        with self._lock:
+        with self._cond:
             if key in self._hot or key in self._inflight or key in self._disk:
                 self.stats.duplicate_puts += 1
                 if key in self._hot:
                     self._hot.move_to_end(key)
+                self._note_stall_locked(started)
                 return
             self.stats.puts += 1
             self._hot_put(key, _HotEntry(payload, kind=kind, tokens=tokens))
-            if self._root == "":
+            if self._root == "" or self._stopping:
+                self._note_stall_locked(started)
                 return
-
-        record = encode_record(
-            kind=kind,
-            key=key,
-            signature=self._signature,
-            tokens=tokens,
-            payload=payload,
-        )
-        self._enqueue(key, record, started)
-
-    def _enqueue(self, key: str, record: bytes, started: float) -> None:
-        path = self._path_for(key)
-        pending = _PendingWrite(path=path, record=record, cache_key=key)
-        deadline = started + self._max_stall_s
-        with self._cond:
-            while (
-                self._pending + pending.size > self._pending_budget
-                and self._pending > 0
-                and not self._stopping
-            ):
-                remaining = deadline - self._clock()
-                if remaining <= 0:
-                    self.stats.writes_dropped += 1
-                    self.stats.max_stall_s = max(
-                        self.stats.max_stall_s, self._clock() - started
-                    )
-                    return
-                self._cond.wait(remaining)
-            if self._stopping:
-                self.stats.writes_dropped += 1
-                return
-            self._queue.append(pending)
-            self._inflight.add(key)
-            self._pending += pending.size
-            self.stats.max_stall_s = max(
-                self.stats.max_stall_s, self._clock() - started
+            self._admit_write_locked(
+                _PendingWrite(
+                    path=self._path_for(key),
+                    payload=payload,
+                    cache_key=key,
+                    kind=kind,
+                    tokens=tokens,
+                )
             )
-            self._cond.notify_all()
+            self._note_stall_locked(started)
+
+    def _admit_write_locked(self, pending: _PendingWrite) -> None:
+        """Bytes-aware queue admission. Sheds the oldest droppable entry.
+
+        The budget bounds RAM held for durability alone: a queued write's
+        payload is also in the hot tier, so a snapshot waiting to be written
+        is counted twice for as long as it waits. Thirty-two 171 MB snapshots
+        queued at once is 5.49 GB of that, which is the other half of the
+        report's retirement.
+
+        A pinned record is never the victim. A pin means a live lease is
+        matching against it, and dropping its durability is the one drop that
+        can cost a warm turn rather than a cold restart.
+        """
+        while (
+            self._pending + pending.size > self._pending_budget
+            and self._pending > 0
+        ):
+            victim = self._evict_pending_locked()
+            if victim is None:
+                break
+        if self._pending + pending.size > self._pending_budget and self._pending > 0:
+            self.stats.writes_dropped += 1
+            self.stats.dropped_bytes += pending.size
+            return
+        self._queue.append(pending)
+        self._inflight.add(pending.cache_key)
+        self._pending += pending.size
+        self.stats.pending_peak_bytes = max(
+            self.stats.pending_peak_bytes, self._pending
+        )
+        self._cond.notify_all()
+
+    def _evict_pending_locked(self) -> _PendingWrite | None:
+        for index, candidate in enumerate(self._queue):
+            if self._pins.get(candidate.cache_key):
+                continue
+            del self._queue[index]
+            self._pending -= candidate.size
+            self._inflight.discard(candidate.cache_key)
+            self.stats.writes_dropped += 1
+            self.stats.queue_evictions += 1
+            self.stats.dropped_bytes += candidate.size
+            return candidate
+        return None
+
+    def _note_stall_locked(self, started: float) -> None:
+        """Time the put and check the store's own promise.
+
+        The put path has nothing left in it that can take a millisecond, so a
+        breach here is a symptom, not a policy: a hot tier evicting thousands
+        of entries under one lock, or a caller holding it. Counting it is what
+        turns the next 1.50 s into a number somebody sees."""
+        elapsed = self._clock() - started
+        self.stats.max_stall_s = max(self.stats.max_stall_s, elapsed)
+        if elapsed > self._max_stall_s:
+            self.stats.stall_cap_exceeded += 1
 
     def _path_for(self, key: str) -> str:
         kind, _, name = key.partition(":")
@@ -423,7 +502,28 @@ class TwoTierStateStore:
             self._write_one(pending)
 
     def _write_one(self, pending: _PendingWrite) -> None:
+        """Frame the record, then write it. Both on this thread.
+
+        ``encode_record`` copies the payload once into the framed record and
+        crc32s it. On a 171 MB snapshot that is tens of milliseconds, and it
+        used to happen on the scheduler thread inside the put.
+        """
         ok = False
+        try:
+            record = encode_record(
+                kind=pending.kind,
+                key=pending.cache_key,
+                signature=self._signature,
+                tokens=pending.tokens,
+                payload=pending.payload,
+            )
+        except Exception:  # noqa: BLE001 - a bad record is a lost write, not a crash
+            with self._cond:
+                self.stats.write_errors += 1
+                self._pending -= pending.size
+                self._inflight.discard(pending.cache_key)
+                self._cond.notify_all()
+            return
         directory = os.path.dirname(pending.path)
         temporary = os.path.join(
             directory, _TEMP_PREFIX + uuid.uuid4().hex + os.path.basename(pending.path)
@@ -431,7 +531,7 @@ class TwoTierStateStore:
         try:
             os.makedirs(directory, exist_ok=True)
             with open(temporary, "wb") as handle:
-                handle.write(pending.record)
+                handle.write(record)
             os.replace(temporary, pending.path)
             ok = True
         except OSError:
@@ -445,13 +545,14 @@ class TwoTierStateStore:
             self._pending -= pending.size
             self._inflight.discard(pending.cache_key)
             if ok:
-                self.stats.bytes_written += pending.size
+                written = len(record)
+                self.stats.bytes_written += written
                 self._disk[pending.cache_key] = _DiskEntry(
                     path=pending.path,
-                    size=pending.size,
+                    size=written,
                     last_access=self._clock(),
                 )
-                self._disk_bytes += pending.size
+                self._disk_bytes += written
                 entry = self._hot.get(pending.cache_key)
                 if entry is not None:
                     entry.durable = True

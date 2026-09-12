@@ -132,6 +132,43 @@ def test_the_store_is_built_from_the_cache_section(tmp_path):
     assert store.flush(1.0)
 
 
+def test_the_cache_is_built_from_the_cache_section(tmp_path):
+    """Both knobs that were dead or unenforced now arrive at the cache."""
+    config = TitanConfig.from_toml(
+        MINIMAL + "\n[cache]\nfine_min_gain_tokens = 640\nmax_stall_ms = 30.0\n"
+    )
+
+    class Backend:
+        layer_layout = ("gdn", "qsa")
+
+    signature = wiring.build_signature(config, Backend())
+    store = wiring.build_store(config, signature)
+    try:
+        codec = _StubCodec(signature)
+        cache = wiring.build_cache(config, store, codec)
+        assert cache.store_budget_s == pytest.approx(0.030)
+        assert cache._fine_min_gain == 640
+    finally:
+        store.close()
+
+
+class _StubCodec:
+    def __init__(self, signature):
+        self.signature = signature
+
+    def export_blocks(self, state, start, end):  # pragma: no cover - unused
+        raise AssertionError
+
+    def import_blocks(self, state, start, end, payload):  # pragma: no cover
+        raise AssertionError
+
+    def export_snapshot(self, state, length):  # pragma: no cover - unused
+        raise AssertionError
+
+    def import_snapshot(self, state, length, payload):  # pragma: no cover
+        raise AssertionError
+
+
 def test_the_admission_config_carries_the_soft_guard():
     config = TitanConfig.from_toml(MINIMAL)
     admission = wiring.build_admission_config(config)

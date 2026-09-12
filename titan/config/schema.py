@@ -207,15 +207,33 @@ class CacheConfig:
     resumable point sits close to the prompt end instead of a grid multiple
     back. Round 4a of the cache-boundary work; off restores the coarse
     behaviour for an A/B."""
-    fine_tail_blocks: int = 4
-    """How many ``block_tokens`` of the suffix the fine cut covers."""
+    fine_min_gain_tokens: int = 384
+    """How many tokens the prompt-end cut has to buy back before it is taken.
+
+    The gate the fine tail is actually decided by, in ``_fine_cut_allowed``.
+    An extra chunk launch plus a snapshot is about 283 ms on a quiet writer,
+    so a cut that saves less than this much recompute is a cut that costs
+    more than it returns.
+
+    It is a token count and not a block count on purpose. The field used to be
+    ``fine_tail_blocks``, four blocks, and nothing read it: derived as a
+    threshold it came out at 2048 and refused every fine cut on a prompt
+    shorter than the snapshot grid, which is most of them.
+    """
     ram_tier_mb: float = 4096.0
     """Hot tier size. 4 GB measured the same hit rate as 16 GB with far less
     memory pressure."""
     ssd_dir: str = ""
     ssd_capacity_gb: float = 200.0
     max_stall_ms: float = 50.0
-    """Hard cap on how long a store may block the scheduler thread."""
+    """Hard cap on loop-thread milliseconds one sequence's store may spend in
+    a single cycle.
+
+    Two things read it. The prefix cache spends it as a per-cycle budget: a
+    boundary is only serialised when the measured cost of the last one still
+    fits, and the rest waits for the next cycle. The store checks its own put
+    path against it and counts a breach, which is how the report's 1.50 s
+    against a 50 ms cap would be caught next time."""
     pending_write_budget_mb: float = 512.0
 
     @property
@@ -260,6 +278,16 @@ class SpeculationConfig:
     mtp_depth_min: int = 1
     adaptive_depth: bool = True
     acceptance_window: int = 64
+    mtp_chain: str = "head_output"
+    """How draft step ``i+1`` is fed. ``head_output`` re-enters the head on its
+    own post-norm output, which is vLLM's form and what EAGLE 3.1 credits for
+    long-context acceptance; ``omlx`` re-enters on the head layer's pre-mixer
+    streams, which is what oMLX does. Draft numerics cannot change output, only
+    acceptance, so this is an A/B knob and not a correctness one."""
+    draft_p_min: float = 0.0
+    """Stop the chain past a draft whose top-token probability is below this.
+    llama.cpp measured (16, 0.8) beating (4, 0.0) by 20.4% with acceptance
+    falling and mean run length rising. Zero disables the gate."""
     shortlist_draft: bool = False
     """Prompt-sliced copy blocks drafted from a shortlist of recent n-grams.
     Off until it beats the chain on this machine; two rules if it is enabled:
@@ -467,7 +495,7 @@ class TitanConfig:
                 f"cache.block_tokens ({c.block_tokens}); a grid point that is "
                 "not a block end can never be restored"
             )
-        _at_least("cache.fine_tail_blocks", c.fine_tail_blocks, 1)
+        _at_least("cache.fine_min_gain_tokens", c.fine_min_gain_tokens, 1)
         _positive("cache.ram_tier_mb", c.ram_tier_mb)
         _positive("cache.ssd_capacity_gb", c.ssd_capacity_gb)
         _positive("cache.max_stall_ms", c.max_stall_ms)
@@ -512,6 +540,15 @@ class TitanConfig:
             )
         _positive("speculation.acceptance_window", sp.acceptance_window)
         _at_least("speculation.shortlist_max_block", sp.shortlist_max_block, 1)
+        if sp.mtp_chain not in ("head_output", "omlx"):
+            raise ConfigError(
+                f"speculation.mtp_chain must be 'head_output' or 'omlx', got "
+                f"{sp.mtp_chain!r}"
+            )
+        if not 0.0 <= sp.draft_p_min < 1.0:
+            raise ConfigError(
+                f"speculation.draft_p_min must be in [0, 1), got {sp.draft_p_min}"
+            )
 
         # kernels
         both = sorted(set(k.enabled) & set(k.disabled))

@@ -110,18 +110,27 @@ n      = cache.restore(match, state)             # n <= match.matched_tokens
 ends   = cache.plan_chunks(n, len(tokens), contended)
 snaps  = cache.snapshot_boundaries(n, len(tokens), contended)
 
+writer   = cache.begin_store()                   # incremental, one per sequence
+
 position = n
 for end in ends:
     backend.prefill(state, tokens[position:end],
                     want_logits=(end == len(tokens)),
                     snapshot=(end in snaps))
     position = end
+    if end in snaps:
+        writer.note_boundary(end)
+    writer.pump(tokens, state, force_one=True)   # once per turn, budgeted
 
-# ... decode ...
+# ... decode, pumping each cycle ...
 
 cache.commit(tokens, state, snaps)               # alias of store
 cache.release(lease)
 ```
+
+The engine drives the session and falls back to `commit` alone when the cache
+does not offer one, which is what the engine's own fakes and the benches do.
+`commit` is then the whole prompt in one call, which is correct and slow.
 
 Four things about that sequence are load bearing.
 
@@ -143,8 +152,20 @@ A lease that is never released pins its prefix for the life of the process.
 
 ## 6. Storing
 
-`store` writes snapshots first and blocks second, and it writes blocks only up
-to the deepest snapshot that committed. A block chain reaching past the last
+Storing is incremental. The engine opens a **write session** when a sequence is
+admitted, tells it about each boundary as prefill reaches it, and pumps it once
+per turn; `store(tokens, state, boundaries)` is the same thing with the budget
+removed, which is what a test or a bench that can afford to block gets.
+
+The one-shot form is what the integration report caught. At the retirement of a
+65k-token request it wrote 32 snapshots, 5.49 GB, in 15.4 s, in one call on the
+loop thread, and the next request decoded at 25 tok/s instead of 55 for the
+duration. Retirement is now O(the tail): everything prefill reached is already
+bytes, and what is normally left is the prompt-end boundary the first decode
+cycle staged.
+
+Per boundary, `store` writes snapshots first and blocks second, and it writes
+blocks only up to the deepest snapshot that committed. A block chain reaching past the last
 snapshot cannot be resumed from, so recording it would let a later lookup
 report a length it cannot restore. A boundary whose `export_snapshot` raises,
 because nothing was staged there, is dropped and the chain truncates. That is
@@ -153,6 +174,91 @@ the third invariant, and it is counted as `prefix.chain_truncations`.
 Everything is deduplicated by digest. Two requests that arrive on the same
 prefix each get a lease, and the second one's store is a sequence of index
 touches and `duplicate_puts`. Neither serialises a byte the other already did.
+
+### The timeline, and which thread owns each part
+
+For one boundary at length L, in order:
+
+| Step | Thread | Cost |
+|---|---|---|
+| stage the recurrent snapshot | loop, inside the prefill | already paid by the forward |
+| note the boundary | loop, end of the same turn | a list append |
+| `export_snapshot(state, L)` | loop | one `mx.eval` of the staged slice, then the copy into `bytes` |
+| `export_blocks` per new block | loop | one `mx.eval` of a 512-token slice per layer, then the copy |
+| chain hash per new block | loop | sha256 over 512 ids, about 20 us |
+| hot-tier insert | loop | a dict insert of bytes that already exist, no copy |
+| record framing and crc32 | writer | one more copy of the payload, tens of ms on a 171 MB snapshot |
+| temp file, write, `os.replace` | writer | the disk |
+
+Only the first four rows are worth milliseconds, and all four are codec calls.
+The chain hash stays on the loop thread deliberately: moving it would leave the
+index that `lookup` reads behind the bytes the store already holds, and it is
+four orders of magnitude cheaper than the copy it sits next to.
+
+### The budget, and what happens when it runs out
+
+`cache.max_stall_ms` (50 ms) is spent as a per-sequence per-cycle budget. A
+session enters a boundary only when the measured cost of the last one still
+fits what is left, because nothing can interrupt `export_snapshot` once it
+starts: not entering is the only lever the loop has. The estimate is an
+exponential mean over that session's own boundaries, so a 4k prompt and a 64k
+one are each judged against themselves.
+
+Two deliberate exceptions:
+
+* the boundary a prefill chunk just staged is always serialised on that turn,
+  whatever the estimate says. A snapshot cannot be cut in half, the turn that
+  staged it is the cheapest moment it will ever have, and the alternative to
+  paying one here is paying for all thirty-two at retirement.
+* a **drain** always makes progress. A retirement that cannot finish inside the
+  budget hands the state handle to a drain, which serialises one boundary per
+  turn, yields to the loop between them, and closes the handle when it is
+  done. The drain is bounded twice: by the budget per call, and by
+  `store_drain_max_s` (2 s), past which the rest is abandoned, counted as
+  `prefix.boundaries_abandoned`, and the chain truncates to the deepest
+  snapshot that did commit. A draining state is still resident, so its
+  estimated bytes stay in `resident_gb` and admission sees them.
+
+### The loop-thread cost model, per snapshot
+
+To size the caps, one boundary costs the loop thread
+
+```
+ms = C + S/B_snap + N * (c + K/B_kv)
+```
+
+with `S` the recurrent snapshot bytes (about 171 MB at 65k on the measured
+run), `N` the blocks the boundary newly covers, `K` the KV bytes per block, and
+`B` the copy bandwidth of `pack_arrays` over already-evaluated arrays. From the
+report's retirement, 15.4 s over 32 snapshots and 5.49 GB, the old path came to
+**about 480 ms per boundary at roughly 360 MB/s effective**.
+
+That 360 MB/s was never the copy. Measured directly on this machine,
+`pack_arrays` runs at **11 to 15 GB/s** on 16.8 MB of float32, so 171 MB of
+payload is 12 to 15 ms of copying. The other 465 ms was the rest of the old
+path: a second full copy in `pack_arrays` itself (the per-array `tobytes()`
+that `join` then copied again, now one copy), the record framing and its crc32
+(now on the writer thread), and the queue wait (now gone). What is left on the
+loop thread per boundary is the `mx.eval` of the staged slice, which is a
+device sync and does not appear in a numpy measurement, plus that one copy.
+
+The fixed part is tiny. Measured on the numpy fakes, which have the same call
+structure and no payload to speak of: **0.017 ms per boundary** covering four
+new 8-token blocks, and **0.0036 ms per block** once the per-boundary overhead
+is amortised (0.129 ms for 8 blocks, 0.296 for 64, 0.915 for 256). So `C` and
+`c` are microseconds and every millisecond at production sizes is payload.
+
+Scale it as `bytes / 360 MB/s`. A 50 ms budget buys about 18 MB, which is why a
+171 MB snapshot is one boundary per turn rather than several, and why the
+budget is spent as "always one, then as many more as fit" rather than as a hard
+refusal.
+
+What is not yet measured is the `mx.eval` term at production sizes, because it
+needs the real checkpoint on the GPU. Until it is, size the budget by assuming
+a boundary is one device sync plus `S / 10 GB/s`, and read
+`prefix.max_store_stall_s` off `/metrics` on a real run to correct it. All of
+it wants re-measuring whenever the snapshot dtype or the layer layout changes,
+because both move `S` directly.
 
 ## 7. The two tiers
 
@@ -172,11 +278,24 @@ into place, so a reader never sees a partial record. Stray temporaries from a
 crash are swept at startup. The tier keeps a size-capped LRU index and deletes
 oldest first past its capacity.
 
-**Backpressure.** The pending queue is bounded in bytes. A put that cannot fit
-waits, but never for longer than `cache.max_stall_ms` (50 ms), and then drops
-the write and counts it. The record stays in RAM; only its durability is lost.
-The overlay's version waited up to two seconds for the same budget, and that is
-directly visible in the report as a 2.69 s turn where the model needed 1.7.
+**Backpressure.** The pending queue is bounded in bytes and a put never waits
+on it. Over budget the queue sheds: the oldest entry that no lease has pinned
+is dropped to make room, and if that is not enough the incoming write drops
+itself. Either way the payload stays in the hot tier and only its durability is
+lost, counted as `store.writes_dropped`, `store.queue_evictions` and
+`store.dropped_bytes`.
+
+The wait is gone rather than shortened. The overlay waited up to two seconds
+for the same budget, which is the report's 2.69 s turn where the model needed
+1.7; Titan's first answer was a 50 ms cap on that wait, and the integration
+report shows what a per-put cap is worth when a retirement makes thirty-two
+puts back to back: `store.max_stall_s` read 1.50 s. A pinned record is never
+the victim, because a pin means a live lease is matching against it, and that
+is the one drop that can cost a warm turn.
+
+The budget bounds real RAM. A queued write's payload is also in the hot tier,
+so a backlog is counted twice until the disk catches up, and 5.49 GB of pending
+snapshots is 5.49 GB that the model cannot have.
 
 **Failure.** Nothing in the store raises into the engine. A missing file, a
 truncated one, a bad crc, a record from another build, a full disk: each
@@ -229,16 +348,37 @@ The ones worth an alert: `prefix.hit_rate` and `prefix.recompute_tokens` for
 whether the cache is doing its job; `prefix.kv_only_blocks` for whether the
 snapshot policy is too coarse; `prefix.snapshot_seconds` divided by
 `prefix.snapshots_written` against the 400 ms line from the report, past which
-fine boundaries stop paying; `store.pending_bytes` for the writer backlog the
-planner gates on; `store.writes_dropped` for how often it lost that bet; and
-`store.corrupt_skipped` with `store.signature_rejected`, which should be zero
-outside a version change.
+fine boundaries stop paying; `store.pending_bytes` and `store.queue_depth` for
+the writer backlog the planner gates on, with `store.pending_peak_bytes` for
+sizing the budget against it; `store.writes_dropped` for how often it lost that
+bet; and `store.corrupt_skipped` with `store.signature_rejected`, which should
+be zero outside a version change.
+
+The store path has its own set. `prefix.max_store_stall_s` is the real number
+the 50 ms cap is about: the longest a single pump held the loop thread, and the
+one that read 1.50 s in the report. `prefix.store_seconds` over
+`prefix.store_pumps` is the average, `prefix.snapshots_deferred` counts pumps
+that stopped short on purpose, `prefix.drain_snapshots` counts boundaries
+finished after their sequence retired, and `prefix.boundaries_abandoned` counts
+the ones a drain gave up on, which should be zero.
 
 ## 11. Configuration
 
 From `CacheConfig`: `block_tokens` 512, `snapshot_grid` 2048,
-`snapshot_at_prompt_end` true, `ram_tier_gb` 4.0, `ssd_dir`,
-`ssd_capacity_gb` 200, `max_stall_ms` 50, `pending_write_budget_mb` 512.
+`snapshot_at_prompt_end` true, `fine_tail` true, `fine_min_gain_tokens` 384,
+`ram_tier_mb` 4096, `ssd_dir`, `ssd_capacity_gb` 200, `max_stall_ms` 50,
+`pending_write_budget_mb` 512.
+
+`fine_min_gain_tokens` is the prompt-end gate from section 2, the 384 tokens a
+fine cut has to buy back before it pays for its own chunk launch and snapshot.
+It replaced `fine_tail_blocks`, which was validated at startup and read by
+nothing: the threshold came from a constant in wiring instead, and deriving it
+from a block count put it at 2048 and refused every fine cut on a prompt
+shorter than the snapshot grid.
+
+`max_stall_ms` is now a loop-thread budget rather than a queue wait. It bounds
+what one sequence's store may spend per cycle, and the store checks its own put
+path against it and counts `store.stall_cap_exceeded` if it ever breaches.
 Startup validation refuses a grid that is not a multiple of the block size and
 a prefill chunk that is not; the constructor refuses the same things again,
 because a test that builds a cache directly deserves the same guardrail.

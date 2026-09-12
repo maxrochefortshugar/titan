@@ -35,8 +35,8 @@ from titan.config import settings
 from titan.config.schema import TitanConfig
 from titan.core.errors import ConfigError
 
-FINE_CUT_MIN_GAIN_TOKENS = 384
-"""Below this, the prompt-end cut costs more than the recompute it saves."""
+_FINE_CUT_DISABLED = 1 << 30
+"""A gain no prompt can reach, which is how ``fine_tail = false`` is spelled."""
 
 __all__ = [
     "Runtime",
@@ -318,11 +318,16 @@ def build_cache(config: TitanConfig, store: Any, codec: Any) -> Any:
         contended_chunk_tokens=c.block_tokens,
         # The gate is a measured cost, not a count of blocks: the extra chunk
         # launch plus the snapshot is about 283 ms, so a fine cut has to buy at
-        # least 384 tokens back to be worth taking. Deriving it from
-        # ``fine_tail_blocks`` put the threshold at 2048 and refused every fine
-        # cut on a prompt shorter than the snapshot grid, which is most of them.
-        fine_min_gain_tokens=FINE_CUT_MIN_GAIN_TOKENS if c.fine_tail else 1 << 30,
+        # least 384 tokens back to be worth taking. ``fine_tail = false``
+        # raises the threshold out of reach rather than branching downstream.
+        fine_min_gain_tokens=(
+            c.fine_min_gain_tokens if c.fine_tail else _FINE_CUT_DISABLED
+        ),
         fine_max_pending_bytes=int(c.pending_write_budget_mb * 1024**2),
+        # The stall cap, spent as a per-cycle serialisation budget. The
+        # scheduler reads it back off the cache, because the engine may not
+        # import the config.
+        store_budget_s=c.max_stall_ms / 1000.0,
     )
 
 
@@ -357,6 +362,48 @@ def build_admission_config(config: TitanConfig, backend: Any = None) -> Any:
     return factory(**fields)
 
 
+def build_drafter(config: TitanConfig, *, backend: Any, profiler: Any) -> Any:
+    """The MTP drafter, or ``None`` when the backend has no head to draft with.
+
+    Speculation on means the drafter is present. A backend that reports
+    ``draft_depth_max == 0`` was loaded from a checkpoint without the MTP block,
+    and there is nothing to build; the cycle then runs its one-row path, which
+    is the same tokens at the same acceptance-free cost.
+    """
+    if int(getattr(backend, "draft_depth_max", 0)) <= 0:
+        return None
+    factory = _resolve("titan.adapters.mlx.drafter", "MTPDrafter", "the MTP drafter")
+    return factory(
+        backend,
+        chain=config.speculation.mtp_chain,
+        p_min=config.speculation.draft_p_min,
+        max_depth=config.speculation.mtp_depth_max,
+        profiler=profiler,
+    )
+
+
+def build_verifier(config: TitanConfig) -> Any:
+    """The depth policy. Expected value when adaptive, a fixed depth when not."""
+    factory = _resolve(
+        "titan.engine.decode_cycle",
+        "ExpectedValueDepthController",
+        "the depth controller",
+    )
+    speculation = config.speculation
+    return factory(
+        max_depth=speculation.mtp_depth_max,
+        # Zero when the policy is adaptive, because not drafting is one of the
+        # options it has to be able to price: at 64k with an accepted median of
+        # 1, a floor of one draft is two rejected columns a cycle that no
+        # measurement can talk the policy out of. ``mtp_depth_min`` is the
+        # fixed policy's floor, where nothing measures anything.
+        min_depth=0 if speculation.adaptive_depth else speculation.mtp_depth_min,
+        adaptive=speculation.adaptive_depth,
+        window=speculation.acceptance_window,
+        rows_budget=config.scheduler.decode_rows_budget,
+    )
+
+
 def build_cycle(
     config: TitanConfig, *, backend: Any, tokenizer: Any, profiler: Any
 ) -> Any:
@@ -369,6 +416,8 @@ def build_cycle(
             backend=backend,
             tokenizer=tokenizer,
             profiler=profiler,
+            drafter=build_drafter(config, backend=backend, profiler=profiler),
+            verifier=build_verifier(config),
             max_depth=config.speculation.mtp_depth_max,
             rows_budget=config.scheduler.decode_rows_budget,
         )

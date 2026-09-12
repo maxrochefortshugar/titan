@@ -73,7 +73,7 @@ def pack_arrays(meta: Mapping[str, Any], arrays: Mapping[str, mx.array]) -> byte
     checksum that a zip's would duplicate.
     """
     entries: list[dict[str, Any]] = []
-    buffers: list[bytes] = []
+    buffers: list[memoryview] = []
     offset = 0
     ordered = sorted(arrays.items())
     if ordered:
@@ -83,18 +83,24 @@ def pack_arrays(meta: Mapping[str, Any], arrays: Mapping[str, mx.array]) -> byte
         view = _VIEW_BY_SIZE.get(size)
         if view is None:  # pragma: no cover - defensive
             raise PayloadError(f"no raw view for a {size}-byte dtype")
-        raw = np.array(value.view(view), copy=False).tobytes()
+        # One copy, not two. The host array wraps the same unified memory the
+        # device array holds, and the byte view of it is handed straight to
+        # ``join``, so the payload is materialised exactly once. The old
+        # ``.tobytes()`` here copied a 110 MiB snapshot into a temporary that
+        # ``join`` then copied again, on the scheduler thread both times.
+        host = np.ascontiguousarray(np.array(value.view(view), copy=False))
+        raw = memoryview(host).cast("B")
         entries.append(
             {
                 "name": name,
                 "dtype": _dtype_name(value.dtype),
                 "shape": list(value.shape),
                 "offset": offset,
-                "nbytes": len(raw),
+                "nbytes": raw.nbytes,
             }
         )
         buffers.append(raw)
-        offset += len(raw)
+        offset += raw.nbytes
     header = json.dumps(
         {**dict(meta), "arrays": entries}, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")

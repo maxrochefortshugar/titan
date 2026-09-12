@@ -195,6 +195,26 @@ class FifoPolicy:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _StoreDrain:
+    """A retired sequence whose store has not finished serialising.
+
+    The state handle stays open until the last boundary is bytes, because
+    ``export_snapshot`` reads it. That is device memory held past the answer,
+    so it is bounded twice: by the per-call budget, which keeps each pump
+    short, and by ``deadline``, past which the remaining boundaries are
+    abandoned and the handle closes regardless.
+    """
+
+    sequence_id: int
+    session: Any
+    state: Any
+    tokens: list[int]
+    covered: int
+    estimated_gb: float
+    deadline: float
+
+
 @dataclass(frozen=True, slots=True)
 class _Submit:
     request: Request
@@ -234,6 +254,7 @@ class EngineLoop:
         profiler: Any = None,
         rows_budget: int = 32,
         max_admissions_per_turn: int = 4,
+        store_drain_max_s: float = 2.0,
     ) -> None:
         self.backend = backend
         self.tokenizer = tokenizer
@@ -263,6 +284,19 @@ class EngineLoop:
         self._sinks: dict[str, Callable[[Any], None]] = {}
         self._pending_error: dict[int, str | None] = {}
         self._cancelled: set[str] = set()
+
+        # -- the store path -------------------------------------------------
+        # One session per live sequence, opened at admission. The loop tells it
+        # about each boundary as prefill reaches it and pumps it once a cycle,
+        # so retirement finds the tail already serialised instead of the whole
+        # prompt. A cache that offers no ``begin_store`` keeps the one-shot
+        # path, which is what the engine's own fakes use.
+        self._store_sessions: dict[int, Any] = {}
+        self._store_drains: list[_StoreDrain] = []
+        self._store_budget_s = float(getattr(cache, "store_budget_s", 0.020) or 0.0)
+        self._store_drain_max_s = max(float(store_drain_max_s), 0.0)
+        self._store_stall_max_s = 0.0
+        self._store_seconds = 0.0
 
         self._turns = 0
         self._prefill_chunks = 0
@@ -312,6 +346,10 @@ class EngineLoop:
             worked |= self._run_decode()
 
         worked |= self._retire()
+        # Last, so a boundary the prefill above just staged is serialised on
+        # the same turn it was reached, and so the budget is spent on what is
+        # left after the forward rather than in front of it.
+        worked |= self._pump_stores()
         return worked
 
     def run_forever(self) -> None:
@@ -333,6 +371,16 @@ class EngineLoop:
         for sequence in list(self._live):
             self._finish(sequence, FinishReason.ABORT, error="engine shutting down")
         self._retire()
+        # Whatever a retirement deferred still owns a state handle. Give it the
+        # rest of the drain window, then take the handles back.
+        while self._store_drains and self.clock.now() < deadline:
+            self._pump_stores()
+        for entry in list(self._store_drains):
+            entry.session.abandon()
+            entry.session.finish(entry.tokens, entry.covered)
+            if entry.state is not None:
+                self.backend.close_state(entry.state)
+        self._store_drains.clear()
 
     def stats(self) -> LoopStats:
         return LoopStats(
@@ -370,6 +418,9 @@ class EngineLoop:
             plan = self._plans.get(int(sequence.sequence_id))
             if plan is not None:
                 total += plan.estimated_gb
+        # A draining store still holds its state handle, so the memory is
+        # still resident and admission has to see it.
+        total += sum(entry.estimated_gb for entry in self._store_drains)
         return total
 
     # -- turn stages -------------------------------------------------------
@@ -470,6 +521,9 @@ class EngineLoop:
         self._admitted += 1
         self._live.append(sequence)
         self._plans[int(sequence.sequence_id)] = plan
+        opener = getattr(self.cache, "begin_store", None)
+        if callable(opener):
+            self._store_sessions[int(sequence.sequence_id)] = opener()
         self._sinks[str(request.request_id)] = sink
         self.profiler.event(
             "admitted",
@@ -540,6 +594,13 @@ class EngineLoop:
             return
         sequence.prefill_position = chunk.end
         self._prefill_chunks += 1
+        if chunk.emit_snapshot:
+            # Reached, not yet bytes. The pump at the end of this turn is what
+            # serialises it, and it is the same turn, so the state slice is
+            # the one the forward just produced.
+            session = self._store_sessions.get(int(sequence.sequence_id))
+            if session is not None:
+                session.note_boundary(chunk.end)
         self.profiler.event(
             "prefill_chunk",
             sequence=int(sequence.sequence_id),
@@ -573,6 +634,105 @@ class EngineLoop:
             if int(sequence.sequence_id) in finished:
                 self._finish(sequence, sequence.finish_reason or FinishReason.STOP)
         return True
+
+    # -- the store path ----------------------------------------------------
+    def _pump_stores(self) -> bool:
+        """Spend the store budget: live sequences first, then the drains.
+
+        The budget is per request per cycle. Two sequences with work queued
+        each get their own, because the alternative is a shared pot that the
+        first sequence in the list always empties.
+
+        Nothing here can be interrupted once it is inside the codec, so the
+        cap is enforced by not entering: a session starts a boundary only when
+        the measured cost of its last one still fits.
+        """
+        worked = False
+        budget = self._store_budget_s
+        for sequence in self._live:
+            session = self._store_sessions.get(int(sequence.sequence_id))
+            if session is None or sequence.state is None or not session.pending:
+                continue
+            worked = True
+            self._spend(
+                session,
+                sequence.tokens,
+                sequence.state,
+                budget=budget,
+                sequence_id=int(sequence.sequence_id),
+                # One boundary a cycle, whatever the estimate says, and then
+                # as many more as the budget allows. A snapshot cannot be
+                # serialised in halves, and the cycle that staged it is the
+                # cheapest moment it will ever have: the alternative to paying
+                # here is paying for all thirty-two of them at retirement,
+                # which is the 15.4 s the report measured.
+                force_one=True,
+            )
+        for entry in list(self._store_drains):
+            worked = True
+            self._spend(
+                entry.session,
+                entry.tokens,
+                entry.state,
+                budget=budget,
+                sequence_id=entry.sequence_id,
+                force_one=True,
+            )
+            expired = self.clock.now() >= entry.deadline
+            if entry.session.pending and not expired:
+                continue
+            if entry.session.pending:
+                self.profiler.event(
+                    "store_drain_abandoned",
+                    sequence=entry.sequence_id,
+                    boundaries=entry.session.pending,
+                )
+                entry.session.abandon()
+            entry.session.finish(entry.tokens, entry.covered)
+            self._store_drains.remove(entry)
+            if entry.state is not None:
+                self.backend.close_state(entry.state)
+            self.profiler.event("store_drained", sequence=entry.sequence_id)
+        return worked
+
+    def _spend(
+        self,
+        session: Any,
+        tokens: Sequence[int],
+        state: Any,
+        *,
+        budget: float,
+        sequence_id: int,
+        force_one: bool,
+    ) -> float:
+        try:
+            spent = float(
+                session.pump(tokens, state, budget_s=budget, force_one=force_one)
+            )
+        except Exception as exc:  # noqa: BLE001 - a store fault never kills a turn
+            self.profiler.event("store_failed", sequence=sequence_id, reason=str(exc))
+            session.abandon()
+            return 0.0
+        self._store_seconds += spent
+        self._store_stall_max_s = max(self._store_stall_max_s, spent)
+        if spent > 0.0:
+            self.profiler.event(
+                "store_pump",
+                sequence=sequence_id,
+                ms=spent * 1000.0,
+                pending=session.pending,
+            )
+        return spent
+
+    @property
+    def store_stall_max_s(self) -> float:
+        """The longest one pump held the loop thread, over the process.
+
+        The number the integration report measured at 1.50 s. It belongs to
+        the loop rather than to the cache because it is loop time, and the
+        cache counts its own copy for ``/metrics``.
+        """
+        return self._store_stall_max_s
 
     # -- finishing ---------------------------------------------------------
     def _finish(
@@ -617,9 +777,17 @@ class EngineLoop:
                         timestamp=self.clock.now(),
                     ),
                 )
+            deferred = False
             if reason is not FinishReason.ABORT and reason is not FinishReason.ERROR:
-                self._store_prefix(sequence)
-            if sequence.state is not None:
+                deferred = self._store_prefix(sequence)
+            else:
+                self._store_sessions.pop(sid, None)
+            if deferred:
+                # A drain owns the state handle now and closes it when the
+                # last boundary is bytes. The sequence itself is done: it
+                # emits, it retires, it holds no seat.
+                sequence.state = None
+            elif sequence.state is not None:
                 self.backend.close_state(sequence.state)
                 sequence.state = None
             sequence.phase = SequencePhase.DONE
@@ -645,19 +813,27 @@ class EngineLoop:
         self._live = [s for s in self._live if s.phase is not SequencePhase.DONE]
         return True
 
-    def _store_prefix(self, sequence: SequenceState) -> None:
+    def _store_prefix(self, sequence: SequenceState) -> bool:
         """Hand the finished prefix to the cache, or decline to.
+
+        Returns whether a post-retirement drain took ownership of the state
+        handle, in which case the caller must not close it.
 
         The state covers every token but the pending one, so what is offered is
         ``tokens[:-1]``. If the state length does not agree with that -- a stop
         truncation the backend refused, say -- nothing is stored. D9: a boundary
         that did not commit is dropped, never recorded.
+
+        With a session this is O(the tail): every boundary but the prompt-end
+        one was serialised on the cycle that reached it. Without one it is the
+        old single call, which is what the engine's fakes and the benches use.
         """
+        session = self._store_sessions.pop(int(sequence.sequence_id), None)
         if self.cache is None or sequence.state is None:
-            return
+            return False
         covered = len(sequence.tokens) - 1
         if covered <= 0:
-            return
+            return False
         try:
             # What the state actually backs, which is not always the token list.
             # A stop string that reached back into a closed block leaves the
@@ -674,7 +850,7 @@ class EngineLoop:
                     sequence=int(sequence.sequence_id),
                     covered=covered,
                 )
-                return
+                return False
             plan = self._plans.get(int(sequence.sequence_id))
             offered = set(plan.snapshot_at if plan else ())
             if sequence.prompt_end_staged:
@@ -687,11 +863,64 @@ class EngineLoop:
             # snapshot sits at, which the store rounds down, fails to export
             # and counts as a truncated chain: work and a counter for nothing.
             boundaries = tuple(sorted(b for b in offered if 0 < b <= covered))
-            self.cache.store(sequence.tokens[:covered], sequence.state, boundaries)
+            if session is None:
+                self.cache.store(sequence.tokens[:covered], sequence.state, boundaries)
+                return False
+            return self._finish_session(session, sequence, covered, boundaries)
         except Exception as exc:  # noqa: BLE001 - a store fault never kills a turn
             self.profiler.event(
                 "store_failed", sequence=int(sequence.sequence_id), reason=str(exc)
             )
+        return False
+
+    def _finish_session(
+        self,
+        session: Any,
+        sequence: SequenceState,
+        covered: int,
+        boundaries: Sequence[int],
+    ) -> bool:
+        """Close a session out, deferring whatever does not fit the budget.
+
+        Everything prefill reached is already bytes, so what is normally left
+        here is the prompt-end boundary the first decode cycle staged: one
+        snapshot and the handful of blocks under it, not thirty-two and 5.49
+        GB. If even that overruns, it goes to a drain rather than to the loop.
+        """
+        sid = int(sequence.sequence_id)
+        tokens = list(sequence.tokens[:covered])
+        for boundary in boundaries:
+            session.note_boundary(min(int(boundary), covered))
+        self._spend(
+            session,
+            tokens,
+            sequence.state,
+            budget=self._store_budget_s,
+            sequence_id=sid,
+            force_one=False,
+        )
+        if not session.pending:
+            session.finish(tokens, covered)
+            return False
+        begin = getattr(session, "begin_drain", None)
+        if callable(begin):
+            begin()
+        plan = self._plans.get(sid)
+        self._store_drains.append(
+            _StoreDrain(
+                sequence_id=sid,
+                session=session,
+                state=sequence.state,
+                tokens=tokens,
+                covered=covered,
+                estimated_gb=plan.estimated_gb if plan is not None else 0.0,
+                deadline=self.clock.now() + self._store_drain_max_s,
+            )
+        )
+        self.profiler.event(
+            "store_deferred", sequence=sid, boundaries=session.pending
+        )
+        return True
 
     # -- plumbing ----------------------------------------------------------
     def _sequence(self, sequence_id: SequenceId) -> SequenceState | None:
