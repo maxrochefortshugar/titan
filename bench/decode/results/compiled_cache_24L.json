@@ -1,0 +1,113 @@
+{
+  "kind": "compiled_cache",
+  "layers": 24,
+  "context": 600,
+  "widths": [
+    {
+      "width": 1,
+      "first_build_ms": 8.292959000073097,
+      "first_step_ms": 21.349125000028835,
+      "second_build_ms": 0.6430839999893578,
+      "second_step_ms": 6.19379200009007
+    },
+    {
+      "width": 2,
+      "first_build_ms": 8.56724999994185,
+      "first_step_ms": 15.676958999961244,
+      "second_build_ms": 0.5899169999565856,
+      "second_step_ms": 5.9577499999932115
+    },
+    {
+      "width": 3,
+      "first_build_ms": 8.705874999918706,
+      "first_step_ms": 14.292124999997213,
+      "second_build_ms": 0.5225830000199494,
+      "second_step_ms": 5.754207999984828
+    },
+    {
+      "width": 4,
+      "first_build_ms": 12.419625000006818,
+      "first_step_ms": 17.657374999998865,
+      "second_build_ms": 0.5344169999261794,
+      "second_step_ms": 5.174249999981839
+    },
+    {
+      "width": 5,
+      "first_build_ms": 8.238667000000532,
+      "first_step_ms": 13.208499999905143,
+      "second_build_ms": 0.506125000015345,
+      "second_step_ms": 4.993666000018493
+    },
+    {
+      "width": 6,
+      "first_build_ms": 8.546416000058343,
+      "first_step_ms": 13.161125000010543,
+      "second_build_ms": 0.5730830000629794,
+      "second_step_ms": 4.948833000071318
+    },
+    {
+      "width": 7,
+      "first_build_ms": 8.326249999981883,
+      "first_step_ms": 12.976499999922453,
+      "second_build_ms": 0.5378750000772925,
+      "second_step_ms": 4.8393330000635615
+    },
+    {
+      "width": 8,
+      "first_build_ms": 8.392458999992414,
+      "first_step_ms": 13.349250000032953,
+      "second_build_ms": 0.5503329999783091,
+      "second_step_ms": 4.890333000048486
+    }
+  ],
+  "capacities": [
+    {
+      "tokens": 200,
+      "capacity": 256,
+      "first_build_ms": 8.195999999998094,
+      "first_step_ms": 12.720917000024201,
+      "second_build_ms": 0.5228329999908965,
+      "second_step_ms": 4.764582999996492
+    },
+    {
+      "tokens": 500,
+      "capacity": 512,
+      "first_build_ms": 8.50575000004028,
+      "first_step_ms": 12.940208000031816,
+      "second_build_ms": 0.4989170000726517,
+      "second_step_ms": 4.835000000070977
+    },
+    {
+      "tokens": 1000,
+      "capacity": 1024,
+      "first_build_ms": 8.311790999982804,
+      "first_step_ms": 12.855833000003258,
+      "second_build_ms": 0.5310000000235959,
+      "second_step_ms": 4.787583000052109
+    },
+    {
+      "tokens": 2000,
+      "capacity": 2048,
+      "first_build_ms": 8.184166999967601,
+      "first_step_ms": 12.68924999999399,
+      "second_build_ms": 0.5810000000110449,
+      "second_step_ms": 4.841333000058512
+    },
+    {
+      "tokens": 3000,
+      "capacity": 4096,
+      "first_build_ms": 8.11399999997775,
+      "first_step_ms": 12.45329200003198,
+      "second_build_ms": 0.5868330000566857,
+      "second_step_ms": 4.941708000046674
+    },
+    {
+      "tokens": 5000,
+      "capacity": 8192,
+      "first_build_ms": 8.31679099997018,
+      "first_step_ms": 12.932957999964856,
+      "second_build_ms": 0.6053749999637148,
+      "second_step_ms": 4.823665999992954
+    }
+  ]
+}

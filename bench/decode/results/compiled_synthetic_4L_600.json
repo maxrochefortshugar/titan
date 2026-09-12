@@ -1,0 +1,182 @@
+{
+  "kind": "compiled_synthetic",
+  "layers": 4,
+  "context": 600,
+  "repeats": 6,
+  "rows": [
+    {
+      "eager": {
+        "arm": "eager",
+        "width": 1,
+        "ops": 537,
+        "top_primitives": [
+          [
+            "Reshape",
+            80
+          ],
+          [
+            "Broadcast",
+            70
+          ],
+          [
+            "QuantizedMatmul",
+            58
+          ],
+          [
+            "Multiply",
+            50
+          ],
+          [
+            "Sigmoid",
+            28
+          ],
+          [
+            "ExpandDims",
+            22
+          ],
+          [
+            "Divide",
+            21
+          ],
+          [
+            "RMSNorm",
+            20
+          ]
+        ],
+        "build_ms": 1.0910522499614217,
+        "step_ms": 1.3465732500321792,
+        "gpu_ms": 0.2555210000707575
+      },
+      "compiled": {
+        "arm": "compiled",
+        "width": 1,
+        "ops": 490,
+        "top_primitives": [
+          [
+            "QuantizedMatmul",
+            67
+          ],
+          [
+            "Reshape",
+            44
+          ],
+          [
+            "ExpandDims",
+            37
+          ],
+          [
+            "Squeeze",
+            29
+          ],
+          [
+            "Unflatten",
+            29
+          ],
+          [
+            "CompiledBroadcastMultiply",
+            25
+          ],
+          [
+            "RMSNorm",
+            20
+          ],
+          [
+            "Slice",
+            20
+          ]
+        ],
+        "build_ms": 0.09444775000133632,
+        "step_ms": 1.0477499999694828,
+        "gpu_ms": 0.9533022499681465
+      },
+      "width": 1
+    },
+    {
+      "eager": {
+        "arm": "eager",
+        "width": 4,
+        "ops": 566,
+        "top_primitives": [
+          [
+            "Reshape",
+            92
+          ],
+          [
+            "Broadcast",
+            75
+          ],
+          [
+            "QuantizedMatmul",
+            67
+          ],
+          [
+            "Multiply",
+            50
+          ],
+          [
+            "Sigmoid",
+            28
+          ],
+          [
+            "ExpandDims",
+            24
+          ],
+          [
+            "Divide",
+            21
+          ],
+          [
+            "RMSNorm",
+            20
+          ]
+        ],
+        "build_ms": 1.1559895000061715,
+        "step_ms": 1.4237812499970914,
+        "gpu_ms": 0.2677917499909199
+      },
+      "compiled": {
+        "arm": "compiled",
+        "width": 4,
+        "ops": 490,
+        "top_primitives": [
+          [
+            "QuantizedMatmul",
+            67
+          ],
+          [
+            "Reshape",
+            44
+          ],
+          [
+            "ExpandDims",
+            37
+          ],
+          [
+            "Squeeze",
+            29
+          ],
+          [
+            "Unflatten",
+            29
+          ],
+          [
+            "CompiledBroadcastMultiply",
+            25
+          ],
+          [
+            "RMSNorm",
+            20
+          ],
+          [
+            "Slice",
+            20
+          ]
+        ],
+        "build_ms": 0.09110450000093806,
+        "step_ms": 1.0662084999921717,
+        "gpu_ms": 0.9751039999912336
+      },
+      "width": 4
+    }
+  ]
+}
