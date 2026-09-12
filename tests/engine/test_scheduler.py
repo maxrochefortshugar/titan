@@ -460,3 +460,21 @@ def test_an_unaligned_prompt_end_is_left_to_the_prefill_plan():
     loop.submit(make_request(tuple(range(3001)), max_tokens=2), Sink())
     drain(loop)
     assert backend.staged == []
+
+
+def test_every_prefill_chunk_is_handed_the_token_that_follows_it():
+    """A draft head folds ``(hidden[t], token[t+1])``, so the pair at a chunk's
+    last position is the only one the chunk cannot form from its own tokens.
+
+    The token is always in range: prefill plans stop one short of the prompt,
+    which is the decode invariant, so no chunk is ever the end of the list.
+    """
+    loop, backend, _tokenizer = build_loop()
+    prompt = tuple(range(5000))
+    loop.submit(make_request(prompt, max_tokens=2), Sink())
+    for _ in range(4):
+        loop.step()
+
+    ends = [2048, 4096, 4608, 4999]
+    assert backend.prefill_next_tokens == [prompt[e] for e in ends]
+    assert None not in backend.prefill_next_tokens

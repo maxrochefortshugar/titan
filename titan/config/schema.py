@@ -284,6 +284,29 @@ class SpeculationConfig:
     long-context acceptance; ``omlx`` re-enters on the head layer's pre-mixer
     streams, which is what oMLX does. Draft numerics cannot change output, only
     acceptance, so this is an A/B knob and not a correctness one."""
+    mtp_chain_cache: str = "clone"
+    """How the draft chain keeps its tail out of the head's committed history.
+
+    ``clone`` copies the head KV per cycle, which is free on a short head and
+    is 65 MB plus a re-pooled sparse index on a head that holds a 64k prompt.
+    ``trim`` appends to the real cache and rewinds it, which is oMLX's form.
+    Identical drafts either way."""
+    mtp_prime_prompt: bool = False
+    """Fold the prompt into the MTP head's KV cache during prefill.
+
+    The head is one sparse-attention layer out of 49, so a fold over the prompt
+    costs about 2% of a prefill; what it buys is a drafter whose attention has
+    seen the prompt at all. Without it the head's cache is empty at the first
+    decode cycle and fills only with committed tokens, which is where the 64k
+    acceptance defect lives. Draft numerics cannot change output."""
+    mtp_head_align_positions: bool = False
+    """Give the MTP head the trunk's sequence positions instead of its own.
+
+    The head's KV cache starts empty at the first decode cycle, so its RoPE
+    offset is the count of decoded tokens while the trunk attends at the
+    prompt's length plus that count. On this checkpoint the gap is the prompt,
+    which at 64k is the whole position range the head was trained on. Draft
+    numerics cannot change output, so this is an acceptance knob."""
     draft_p_min: float = 0.0
     """Stop the chain past a draft whose top-token probability is below this.
     llama.cpp measured (16, 0.8) beating (4, 0.0) by 20.4% with acceptance
@@ -540,6 +563,11 @@ class TitanConfig:
             )
         _positive("speculation.acceptance_window", sp.acceptance_window)
         _at_least("speculation.shortlist_max_block", sp.shortlist_max_block, 1)
+        if sp.mtp_chain_cache not in ("clone", "trim"):
+            raise ConfigError(
+                f"speculation.mtp_chain_cache must be 'clone' or 'trim', got "
+                f"{sp.mtp_chain_cache!r}"
+            )
         if sp.mtp_chain not in ("head_output", "omlx"):
             raise ConfigError(
                 f"speculation.mtp_chain must be 'head_output' or 'omlx', got "

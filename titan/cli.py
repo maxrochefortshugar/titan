@@ -133,6 +133,15 @@ def cmd_serve(args: argparse.Namespace, out, err) -> int:
     from titan.config.wiring import build_runtime  # noqa: PLC0415
 
     config = _load(args)
+    from titan.observability.memory_guard import preflight  # noqa: PLC0415
+
+    weights_gb = float(getattr(config.model, "weights_gb", 0.0) or 0.0) or 75.0
+    lock = preflight(
+        config.server.port,
+        weights_gb,
+        config.scheduler.memory_guard_gb,
+        log=lambda msg: print(msg, file=err),
+    )
     runtime = build_runtime(config)
     runtime.start()
     print(
@@ -151,6 +160,7 @@ def cmd_serve(args: argparse.Namespace, out, err) -> int:
             timeout_keep_alive=int(config.server.request_timeout_s),
         )
     finally:
+        lock.release()
         runtime.stop(30.0)
     return 0
 

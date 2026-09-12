@@ -132,3 +132,73 @@ def test_the_null_profiler_accepts_everything_and_keeps_nothing():
     with p.span("x"):
         pass
     assert p.snapshot() == {}
+
+
+def test_position_acceptance_is_survival_conditional_on_reaching():
+    """Four depth-3 cycles accepting 3, 2, 1 and 0 drafts.
+
+    Every chain reached all three positions, so the denominators are all four
+    and the curve is the survival counts: three of four kept the first draft,
+    two the second, one the third.
+    """
+    p = RingProfiler(Clock())
+    for accepted in (3, 2, 1, 0):
+        p.cycle(profile(tokens_drafted=3, tokens_committed=accepted + 1))
+    assert p.position_acceptance() == (0.75, 0.5, 0.25)
+
+
+def test_position_acceptance_denominator_is_chains_that_got_there():
+    """A depth-1 cycle says nothing about position 1, so it is not counted."""
+    p = RingProfiler(Clock())
+    p.cycle(profile(tokens_drafted=1, tokens_committed=2))
+    p.cycle(profile(tokens_drafted=3, tokens_committed=3))
+    # Position 0: both chains reached it, both kept it.
+    # Position 1: one chain reached it and kept it.
+    # Position 2: one chain reached it and lost it.
+    assert p.position_acceptance() == (1.0, 1.0, 0.0)
+
+
+def test_position_acceptance_skips_multi_sequence_cycles():
+    """Two chains and one committed count cannot be split back out."""
+    p = RingProfiler(Clock())
+    p.cycle(profile(n_sequences=2, tokens_drafted=6, tokens_committed=4))
+    assert p.position_acceptance() == ()
+
+
+def test_position_acceptance_is_empty_without_a_drafter():
+    p = RingProfiler(Clock())
+    p.cycle(profile(tokens_drafted=0, tokens_committed=1))
+    assert p.position_acceptance() == ()
+    assert p.accepted_histogram() == {"0": 1}
+
+
+def test_accepted_histogram_counts_cycles_by_accepted_run():
+    p = RingProfiler(Clock())
+    for accepted in (0, 1, 1, 3):
+        p.cycle(profile(tokens_drafted=3, tokens_committed=accepted + 1))
+    assert p.accepted_histogram() == {"0": 1, "1": 2, "3": 1}
+
+
+def test_snapshot_carries_the_acceptance_curve():
+    p = RingProfiler(Clock())
+    p.cycle(profile(tokens_drafted=2, tokens_committed=2))
+    body = p.snapshot()
+    assert body["position_acceptance"] == [1.0, 0.0]
+    assert body["accepted_histogram"] == {"1": 1}
+
+
+def test_a_window_reads_back_only_the_last_n_cycles():
+    """A sweep measures several contexts in one process, so the window is how
+    one request's cycles are read back without resetting anything."""
+    p = RingProfiler(Clock())
+    for _ in range(5):
+        p.cycle(profile(tokens_drafted=3, tokens_committed=4, wall_ms=10.0))
+    for _ in range(3):
+        p.cycle(profile(tokens_drafted=3, tokens_committed=1, wall_ms=20.0))
+    body = p.snapshot(3)
+    assert body["window"] == 3
+    assert body["decode"]["cycles"] == 3
+    assert body["decode"]["mean_accepted_per_cycle"] == 0.0
+    assert body["position_acceptance"] == [0.0, 0.0, 0.0]
+    # The counters stay cumulative: that is what makes the window computable.
+    assert body["counters"]["cycles"] == 8

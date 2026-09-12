@@ -176,6 +176,8 @@ class TitanQwenFlashNext:
         want_logits: bool = False,
         want_hidden: bool = False,
         snapshot_every: Optional[int] = None,
+        prime_mtp: bool = False,
+        next_token: Optional[int] = None,
     ) -> PrefillResult:
         """Run *tokens* into *state*, one chunk at a time.
 
@@ -206,6 +208,7 @@ class TitanQwenFlashNext:
             return PrefillResult(None, None, state.length)
         chunk = int(chunk or self.prefill_chunk)
         state.phase = PHASE_PREFILL
+        prime = bool(prime_mtp) and self.language_model.get_mtp_module() is not None
 
         logits = hidden = None
         start = 0
@@ -218,12 +221,14 @@ class TitanQwenFlashNext:
             output = self.language_model(
                 piece,
                 cache=state.layers,
-                return_hidden=want_hidden and last,
+                return_hidden=(want_hidden and last) or prime,
                 # Skipping the head is worth 48-95 ms on a 2048-token chunk;
                 # only the final position of the final chunk is ever sampled.
                 skip_logits=not want_head,
             )
             state.length += piece.shape[1]
+            if prime:
+                self._prime_chunk(state, output, ids, start, stop, total, next_token)
             if last:
                 logits = output.logits[:, -1:, :] if want_head else None
                 hidden = _first_hidden(output) if want_hidden else None
@@ -241,6 +246,59 @@ class TitanQwenFlashNext:
         if hidden is not None:
             state.mtp_hidden = hidden
         return PrefillResult(logits=logits, hidden=hidden, length=state.length)
+
+    def _prime_chunk(
+        self,
+        state: ModelState,
+        output,
+        ids: mx.array,
+        start: int,
+        stop: int,
+        total: int,
+        next_token: Optional[int],
+    ) -> None:
+        """Fold one prefill chunk into the MTP head's KV cache.
+
+        The head predicts token *t+2* from the trunk's hidden at position *t*
+        and the embedding of token *t+1*, so every pair it wants is something a
+        prefill chunk already computed: the chunk's hidden states, and the
+        chunk's own tokens shifted by one. Folding them costs one extra layer
+        over the prompt -- the head is one layer of 49 -- and it is the only
+        way the head's attention ever sees the prompt at all. Without it the
+        head starts decoding with an empty cache and drafts from the committed
+        run alone, which is the long-context acceptance defect ROUND2 step 1
+        went looking for.
+
+        The pair at the chunk's last position needs the token after the chunk.
+        Inside the prompt that is the next token of *ids*; at the end of what
+        prefill consumes it is the pending token, which the caller passes as
+        ``next_token``. Without one the last pair is left for the first decode
+        cycle's fold, and the head is one entry short of the trunk, which the
+        drafter would read as a gap and answer by dropping the cache. So the
+        caller passing it is not an optimisation.
+        """
+        hidden = _first_hidden(output)
+        if hidden is None:
+            return
+        if stop < total:
+            tail = ids[:, stop : stop + 1]
+        elif next_token is not None:
+            tail = mx.array([[int(next_token)]], dtype=ids.dtype)
+        else:
+            tail = None
+        head = ids[:, start + 1 : stop]
+        if tail is None:
+            fold_ids = head
+            fold_hidden = hidden[:, : hidden.shape[1] - 1, :]
+        else:
+            fold_ids = mx.concatenate([head, tail], axis=1)
+            fold_hidden = hidden
+        if fold_ids.shape[1] == 0:
+            return
+        mtp = self.language_model.get_mtp_module()
+        embed = self.language_model.model.embed_tokens
+        # No logits: a primed pair predicts a token the prompt already has.
+        mtp(fold_hidden, fold_ids, embed, state.mtp_layers)
 
     def decode(
         self,
@@ -335,6 +393,8 @@ class TitanQwenFlashNext:
         hidden: mx.array,
         tokens: Sequence[int] | mx.array,
         cache: list,
+        *,
+        position_offset: int = 0,
     ) -> "MTPStep":
         """One MTP head call, returning both hidden states the chain can reuse.
 
@@ -354,19 +414,46 @@ class TitanQwenFlashNext:
         Logits are for the last position only: a fold over the whole committed
         run needs every position's KV in the head cache, but only the last
         position predicts anything the drafter has not already committed.
+
+        ``position_offset`` shifts the head's RoPE positions by a constant.
+        Zero is the head's own behaviour: position *p* is the *p*-th entry of
+        the head cache, which is the count of tokens decoded so far. The head
+        was trained on the sequence's positions, and at 64k those differ by the
+        prompt length, so the drafter passes the prompt length here to put the
+        head back on the trunk's position line. It does not give the head the
+        prompt's keys, only the prompt's positions.
         """
         mtp = self.language_model.get_mtp_module()
         if mtp is None:
             raise StateError("this model was loaded without the MTP head")
         ids = _as_rows(tokens)
         embed = self.language_model.model.embed_tokens
-        mixed, streams = mtp(hidden, ids, embed, cache)
+        positions = self._mtp_positions(cache, ids.shape[1], int(position_offset))
+        mixed, streams = mtp(hidden, ids, embed, cache, position_ids=positions)
         source = mixed[:, -1:, :]
         if self.args.tie_word_embeddings:
             logits = embed.as_linear(source)
         else:
             logits = self.language_model.lm_head(source)
         return MTPStep(logits=logits, mixed=mixed, streams=streams)
+
+    @staticmethod
+    def _mtp_positions(
+        cache: list, length: int, offset: int
+    ) -> Optional[mx.array]:
+        """Head RoPE positions shifted by *offset*, or ``None`` for the default.
+
+        The shape is the one the attention builds for itself when it is handed
+        nothing: ``[3, 1, T]``, the three mRoPE planes carrying the same text
+        positions. Returning ``None`` at ``offset == 0`` is not an optimisation
+        but a guarantee -- the unaligned arm runs the identical graph it ran
+        before this parameter existed.
+        """
+        if offset <= 0 or not cache:
+            return None
+        start = int(getattr(cache[0], "offset", 0)) + offset
+        positions = mx.arange(start, start + length, dtype=mx.int32)[None]
+        return mx.tile(positions[None], (3, 1, 1))
 
     def mtp_lift(self, mixed: mx.array) -> mx.array:
         """Lift a post-mixer hidden ``[B, T, H]`` into the head's stream width.

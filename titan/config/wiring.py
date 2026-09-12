@@ -235,7 +235,8 @@ def build_backend(config: TitanConfig, registry: Any) -> Any:
         fuse_gate_up=config.model.fuse_gate_up,
     )
     return MLXModelBackend(
-        TitanQwenFlashNext(model, prefill_chunk=config.scheduler.prefill_chunk)
+        TitanQwenFlashNext(model, prefill_chunk=config.scheduler.prefill_chunk),
+        prime_mtp=config.speculation.enabled and config.speculation.mtp_prime_prompt,
     )
 
 
@@ -376,8 +377,10 @@ def build_drafter(config: TitanConfig, *, backend: Any, profiler: Any) -> Any:
     return factory(
         backend,
         chain=config.speculation.mtp_chain,
+        chain_cache=config.speculation.mtp_chain_cache,
         p_min=config.speculation.draft_p_min,
         max_depth=config.speculation.mtp_depth_max,
+        align_positions=config.speculation.mtp_head_align_positions,
         profiler=profiler,
     )
 

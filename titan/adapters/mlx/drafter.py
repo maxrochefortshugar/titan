@@ -68,6 +68,25 @@ __all__ = ["MTPDrafter", "CHAIN_FORMS"]
 CHAIN_FORMS = ("head_output", "omlx")
 """The two ways step ``i+1`` is fed. See the module docstring."""
 
+CHAIN_CACHES = ("clone", "trim")
+"""How the speculative tail is kept out of the head's committed history.
+
+``clone`` copies the head cache and lets the chain append to the copy.
+``trim`` appends to the real cache and rewinds it afterwards, which is what
+oMLX does (``_mtp_head_trim_to``). The two are identical in what they draft
+and differ only in cost, and the cost difference is the length of the head's
+history: a clone is a copy of every entry, so it is free on a head that holds
+three hundred decoded tokens and it is 65 MB of keys plus a re-pooled sparse
+index on a head that holds a 64k prompt."""
+
+
+def _head_offset(state: Any) -> int:
+    """Entries already in the head's KV cache, from the cache itself."""
+    caches = getattr(state, "mtp_layers", None) or ()
+    for cache in caches:
+        return int(getattr(cache, "offset", 0) or 0)
+    return 0
+
 
 def _sync_and_read(values: mx.array) -> list[float]:
     """The one host sync of a proposal. Named so a test can count it."""
@@ -83,6 +102,13 @@ class _Track:
     """Length of the token list at the end of the last proposal."""
     fed: int = 0
     """Tokens folded into the head cache so far. The head's expected offset."""
+    base: int = 0
+    """Sequence position the head cache's entry 0 stands at.
+
+    Zero until the first fold, then the prompt length: the head's own offset
+    plus this is the trunk's position for the same token. Recomputed on every
+    fold from the context rather than remembered from the first one, so a
+    reset, a restore or a skipped cycle cannot leave it stale."""
     last_cycle: int = 0
     resets: int = 0
 
@@ -113,8 +139,10 @@ class MTPDrafter:
         backend: Any,
         *,
         chain: str = "head_output",
+        chain_cache: str = "clone",
         p_min: float = 0.0,
         max_depth: int = 8,
+        align_positions: bool = False,
         shortlist: Any = None,
         profiler: Any = None,
     ) -> None:
@@ -122,9 +150,15 @@ class MTPDrafter:
             raise ValueError(
                 f"unknown MTP chain form {chain!r}, expected one of {CHAIN_FORMS}"
             )
+        if chain_cache not in CHAIN_CACHES:
+            raise ValueError(
+                f"unknown MTP chain cache {chain_cache!r}, expected one of "
+                f"{CHAIN_CACHES}"
+            )
         self.backend = backend
         self.model = backend.model
         self.chain = chain
+        self.chain_cache = chain_cache
         self.p_min = float(p_min)
         self.gated = self.p_min > 0.0
         """Whether the read-back carries a probability beside every draft id.
@@ -133,6 +167,16 @@ class MTPDrafter:
         per chain step is not free, so the probability is computed only when
         something is going to read it. The read-back stride follows."""
         self.max_depth = int(max_depth)
+        self.align_positions = bool(align_positions)
+        """Keep the head's RoPE positions on the trunk's position line.
+
+        The head cache is empty when a sequence starts decoding, so the head
+        reads position 0 for the first drafted token while the trunk is
+        attending at the prompt's length. At a 200-token completion off a short
+        prompt that is a small shift; at 64k it is the whole difference between
+        the positions the head was trained on and the ones it sees. Aligning
+        costs one ``mx.arange`` a step and changes no KV: the head still
+        attends only to the tokens it has folded."""
         # The registry's top-k shortlist lane, when there is one. Absent today
         # and not blocked on: greedy argmax is what the verify compares against,
         # so a shortlist can only ever be a second candidate lane beside it.
@@ -225,7 +269,12 @@ class MTPDrafter:
         state = self.backend.draft_state(handle)
         track = self._tracks.get(int(handle))
         if track is None:
-            track = _Track()
+            track = _Track(fed=_head_offset(state))
+            # Not zero. A prefill that primed the head has already folded the
+            # prompt into this cache, and the drafter's count of folded tokens
+            # is what the alignment check compares the head's offset against.
+            # Starting at zero would read a primed cache as a corrupt one and
+            # throw the prompt away on the first cycle that drafts.
             self._tracks[int(handle)] = track
             self._prune_tracks()
         track.last_cycle = self._cycle
@@ -252,17 +301,28 @@ class MTPDrafter:
         # j pairs with committed token j+1 exactly.
         fold_hidden = hidden[:, :committed, :]
         fold_ids = [list(context[-committed:])]
-        step = self.model.mtp_step(fold_hidden, fold_ids, state.mtp_layers)
+        # The head's entry ``fed`` is the sequence's token at index
+        # ``len(context) - committed``, so this is the constant that turns a
+        # head offset into a trunk position. Zero disables the shift entirely.
+        track.base = max(0, len(context) - committed - track.fed)
+        offset = track.base if self.align_positions else 0
+        step = self.model.mtp_step(
+            fold_hidden, fold_ids, state.mtp_layers, position_offset=offset
+        )
         track.fed += committed
 
         out: list[mx.array] = []
         token = self._emit(step, out)
         if depth > 1:
-            cache = self._clone_head(state)
+            cache = self._chain_head(state)
             for _ in range(depth - 1):
                 nxt = self._next_hidden(step)
-                step = self.model.mtp_step(nxt, token.reshape(1, 1), cache)
+                step = self.model.mtp_step(
+                    nxt, token.reshape(1, 1), cache, position_offset=offset
+                )
                 token = self._emit(step, out)
+            if cache is state.mtp_layers:
+                self._rewind_head(state, depth - 1)
         return out
 
     def _emit(self, step: Any, out: list) -> mx.array:
@@ -308,10 +368,35 @@ class MTPDrafter:
         fresh = self.model.language_model.make_mtp_cache()
         state.mtp_layers[:] = fresh
         track.fed = 0
+        track.base = 0
         track.resets += 1
         self.cache_resets += 1
         if self.profiler is not None:
             self.profiler.event("mtp_head_cache_reset", fed=track.fed)
+
+    def _chain_head(self, state: Any) -> list:
+        """The cache steps 2..k append to. Either a copy or the real one."""
+        if self.chain_cache == "trim":
+            return state.mtp_layers
+        return self._clone_head(state)
+
+    def _rewind_head(self, state: Any, appended: int) -> None:
+        """Undo the chain's appends, so the head stays committed-only.
+
+        One entry per chain step went in, so exactly that many come out, and
+        the trim is an offset rewind rather than a copy: the sparse index keeps
+        its completed prefix blocks and only the ragged tail is re-pooled. The
+        alignment check is what makes this safe to get wrong -- a rewind that
+        did not happen leaves the head's offset ahead of the drafter's count,
+        and the next cycle drops the cache rather than folding into a gap.
+        """
+        for cache in state.mtp_layers:
+            trim = getattr(cache, "trim", None)
+            if trim is None:
+                raise TypeError(
+                    f"{type(cache).__name__} cannot rewind the draft chain"
+                )
+            trim(appended)
 
     def _clone_head(self, state: Any) -> list:
         """A throwaway copy of the head KV for the speculative tail.

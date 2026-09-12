@@ -173,6 +173,53 @@ class RingProfiler:
         out["other_ms"] = max(0.0, (wall - sum(stages.values())) / count)
         return out
 
+    def position_acceptance(self, window: int = 0) -> tuple[float, ...]:
+        """P(draft *i* accepted | the chain reached *i*), over the ring.
+
+        The depth policy keeps this curve per sequence and never shows it to
+        anybody. It is the curve a long-context defect shows up in first --
+        acceptance falling with position is a drafter that runs out of signal,
+        acceptance flat and low at position 0 is a drafter that was never
+        aligned -- so the profiler reconstructs it from what the cycles already
+        carry: a batch-of-one cycle drafted ``tokens_drafted`` and accepted
+        ``tokens_committed - 1``, and a chain that reached position *i* is one
+        that drafted more than *i*.
+
+        Multi-sequence cycles are skipped rather than averaged. Two sequences
+        in one cycle have two chains and one committed count, and splitting
+        that back out is not something the profile can do.
+        """
+        with self._lock:
+            cycles = list(self._cycles)[-window:] if window else list(self._cycles)
+        rows = [
+            (c.tokens_drafted, c.tokens_committed - 1)
+            for c in cycles
+            if c.n_sequences == 1 and c.tokens_drafted > 0
+        ]
+        if not rows:
+            return ()
+        depth = max(drafted for drafted, _ in rows)
+        curve: list[float] = []
+        for position in range(depth):
+            reached = sum(1 for drafted, _ in rows if drafted > position)
+            kept = sum(
+                1 for drafted, accepted in rows
+                if drafted > position and accepted > position
+            )
+            curve.append((kept / reached) if reached else 0.0)
+        return tuple(curve)
+
+    def accepted_histogram(self, window: int = 0) -> Mapping[str, int]:
+        """How many cycles committed *n* accepted drafts. Batch of one only."""
+        with self._lock:
+            cycles = list(self._cycles)[-window:] if window else list(self._cycles)
+        counts: Counter[str] = Counter()
+        for cycle in cycles:
+            if cycle.n_sequences != 1:
+                continue
+            counts[str(max(0, cycle.tokens_committed - 1))] += 1
+        return dict(sorted(counts.items(), key=lambda kv: int(kv[0])))
+
     def recent_cycles(self, count: int = 20) -> tuple[Mapping[str, Any], ...]:
         with self._lock:
             return tuple(asdict(c) for c in list(self._cycles)[-count:])
@@ -181,19 +228,28 @@ class RingProfiler:
         with self._lock:
             return tuple(list(self._events)[-count:])
 
-    def snapshot(self) -> Mapping[str, Any]:
-        """Current counters, for ``GET /metrics`` and the bench harness."""
+    def snapshot(self, window: int = 0) -> Mapping[str, Any]:
+        """Current counters, for ``GET /metrics`` and the bench harness.
+
+        ``window`` is passed through to every reader that aggregates the ring,
+        so a caller that knows how many cycles its own request cost can read
+        back that request's numbers rather than the process's. The counters are
+        cumulative either way, which is what makes the window computable.
+        """
         with self._lock:
             counters = dict(self._counters)
             events = dict(self._event_counts)
             uptime = self.clock.now() - self._started
-        summary = self.summarise()
+        summary = self.summarise(window)
         return {
             "uptime_s": uptime,
+            "window": int(window),
             "counters": counters,
             "events": events,
             "decode": asdict(summary),
-            "stages": dict(self.stage_breakdown()),
+            "stages": dict(self.stage_breakdown(window)),
+            "position_acceptance": list(self.position_acceptance(window)),
+            "accepted_histogram": dict(self.accepted_histogram(window)),
         }
 
     def reset(self) -> None:
@@ -238,7 +294,7 @@ class NullProfiler:
     def span(self, name: str) -> Any:
         return _NullSpan()
 
-    def snapshot(self) -> Mapping[str, Any]:
+    def snapshot(self, window: int = 0) -> Mapping[str, Any]:
         return {}
 
 

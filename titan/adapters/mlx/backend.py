@@ -52,8 +52,14 @@ class _Logits:
 class MLXModelBackend:
     """One process, one model, one instance."""
 
-    def __init__(self, model: TitanQwenFlashNext):
+    def __init__(self, model: TitanQwenFlashNext, *, prime_mtp: bool = False):
         self.model = model
+        self.prime_mtp = bool(prime_mtp)
+        """Fold the prompt into the MTP head's KV cache during prefill.
+
+        Off is the head Titan shipped with: an empty head cache at the first
+        decode cycle, so the drafter's attention sees the committed run and
+        nothing of the prompt. See ``TitanQwenFlashNext._prime_chunk``."""
         self._states: dict[int, ModelState] = {}
         self._sequences: dict[int, SequenceId] = {}
         self._handles = itertools.count(1)
@@ -159,6 +165,7 @@ class MLXModelBackend:
         *,
         want_logits: bool = False,
         snapshot: bool = False,
+        next_token: int | None = None,
     ) -> _Logits | None:
         model_state = self._state(state)
         # No hidden state from a prefill chunk, ever. Asking for it turns on the
@@ -172,7 +179,13 @@ class MLXModelBackend:
             tokens,
             model_state,
             want_logits=want_logits,
+            # Still False, and for the reason above: what the drafter starts
+            # from is the verify's hidden state. Priming is a different thing
+            # from that -- it consumes the chunk's hidden inside the prefill
+            # and keeps none of it -- so it does not go through this flag.
             want_hidden=False,
+            prime_mtp=self.prime_mtp and self.draft_depth_max > 0,
+            next_token=next_token,
         )
         if snapshot:
             # A plan boundary: the cache will be asked to serialise it when the

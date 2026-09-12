@@ -516,15 +516,24 @@ def build_app(deps: ChatDeps) -> FastAPI:
         }
 
     @app.get("/metrics", dependencies=[Depends(require_auth)])
-    async def metrics() -> dict[str, Any]:
+    async def metrics(window: int = 0) -> dict[str, Any]:
         """Counters, the decode summary, and the configuration that produced
         them. One endpoint, because a benchmark number that cannot name its
-        configuration is not evidence."""
+        configuration is not evidence.
+
+        ``window`` limits the decode summary, the stage breakdown and the
+        acceptance curve to the last *n* cycles held in the ring. Zero, the
+        default, is every cycle since the process started. It exists so a
+        sweep can measure several contexts in one process: the counters say
+        how many cycles a request cost, and that count is the window its own
+        numbers are read back at. Nothing is reset, so two readers cannot
+        take each other's measurements away.
+        """
         body: dict[str, Any] = {"model": deps.config.model.name}
         if deps.profiler is not None:
             snapshot = getattr(deps.profiler, "snapshot", None)
             if callable(snapshot):
-                body.update(dict(snapshot()))
+                body.update(dict(snapshot(window) if window else snapshot()))
             recent = getattr(deps.profiler, "recent_events", None)
             if callable(recent):
                 body["recent_events"] = list(recent(60))

@@ -104,6 +104,7 @@ class FakeBackend:
         self.open_handles: set[int] = set()
         self.verify_calls: list[int] = []
         self.prefill_calls: list[tuple[int, int, bool]] = []
+        self.prefill_next_tokens: list[int | None] = []
         self.truncations: list[tuple[int, int]] = []
         self.staged: list[tuple[int, int]] = []
 
@@ -166,9 +167,14 @@ class FakeBackend:
         *,
         want_logits: bool = False,
         snapshot: bool = False,
+        next_token: int | None = None,
     ) -> None:
         entry = self._state(state)
         entry.tokens.extend(tokens)
+        # Recorded, not consumed. The port hands the backend the token after
+        # the chunk so a draft head can close its last pair; this backend has
+        # no head, and a test asserts it never lands past the prompt.
+        self.prefill_next_tokens.append(next_token)
         self.prefill_calls.append((int(state), len(tokens), snapshot))
         if snapshot:
             entry.snapshots.add(len(entry.tokens))

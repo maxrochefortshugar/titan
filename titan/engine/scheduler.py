@@ -588,6 +588,16 @@ class EngineLoop:
                 sequence.tokens[chunk.start : chunk.end],
                 want_logits=False,
                 snapshot=chunk.emit_snapshot,
+                # The token after the chunk. Prefill does not consume it --
+                # the decode invariant leaves the last one pending -- but a
+                # backend that folds the prompt into a draft head's cache
+                # needs it to close the chunk's last pair. Always in range:
+                # prefill plans stop one token short of the prompt.
+                next_token=(
+                    sequence.tokens[chunk.end]
+                    if chunk.end < len(sequence.tokens)
+                    else None
+                ),
             )
         except TitanError as exc:
             self._finish(sequence, FinishReason.ERROR, error=str(exc))

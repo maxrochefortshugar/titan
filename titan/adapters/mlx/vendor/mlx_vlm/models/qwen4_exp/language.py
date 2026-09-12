@@ -2940,7 +2940,16 @@ class Qwen4ExpMTPModule(nn.Module):
         next_token_ids: mx.array,
         embed_tokens,
         cache=None,
+        position_ids: Optional[mx.array] = None,
     ) -> tuple[mx.array, mx.array]:
+        # Titan modification: ``position_ids`` was hardcoded to ``None`` here,
+        # which makes the head's RoPE positions the head cache's own offset --
+        # the count of decoded tokens -- rather than the sequence position the
+        # trunk attends at. The two agree only when the head cache mirrors the
+        # whole prompt, which it does not: it starts empty at the first decode
+        # cycle. Passing positions in lets the caller keep the head on the
+        # trunk's position line without giving it the prompt's keys. ``None``
+        # is still the old behaviour, exactly.
         hidden_states = self.fuse_inputs(
             embed_tokens(next_token_ids),
             hidden_states,
@@ -2957,7 +2966,7 @@ class Qwen4ExpMTPModule(nn.Module):
                 next_token_ids,
                 mask=mask,
                 cache=layer_cache,
-                position_ids=None,
+                position_ids=position_ids,
             )
         return self.hyper_connection_mixer(hidden_states), hidden_states
 

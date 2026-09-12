@@ -36,6 +36,8 @@ class FakeCache:
     def __init__(self) -> None:
         self.offset = 0
         self.consumed: list[list[int]] = []
+        self.trims: list[int] = []
+        self.extracts = 0
 
     def append(self, ids: mx.array) -> None:
         self.offset += int(ids.shape[1])
@@ -45,7 +47,14 @@ class FakeCache:
         clone = FakeCache()
         clone.offset = self.offset
         clone.consumed = [list(row) for row in self.consumed]
+        self.extracts += 1
         return clone
+
+    def trim(self, n: int) -> int:
+        n = min(self.offset, int(n))
+        self.offset -= n
+        self.trims.append(n)
+        return n
 
 
 class FakeEmbed:
@@ -84,10 +93,12 @@ class FakeMTPModule:
     def __init__(self) -> None:
         self.calls: list[SimpleNamespace] = []
 
-    def __call__(self, hidden, ids, embed, cache):
+    def __call__(self, hidden, ids, embed, cache, position_ids=None):
         ids = ids if isinstance(ids, mx.array) else mx.array(ids)
         self.calls.append(
-            SimpleNamespace(hidden=hidden, ids=ids, cache=cache)
+            SimpleNamespace(
+                hidden=hidden, ids=ids, cache=cache, position_ids=position_ids
+            )
         )
         for layer in cache:
             layer.append(ids)
@@ -394,3 +405,173 @@ def _mixed_of(call, rig):
 def _streams_of(call, rig):
     mixed = _replay(call, rig)
     return mx.concatenate([mixed * 3.0, mixed * 1.5], axis=-1)
+
+
+# ---------------------------------------------------------------------------
+# Head position alignment (ROUND2 step 1)
+
+
+def test_positions_are_the_heads_own_offset_by_default(rig):
+    """The unaligned arm hands the head nothing, exactly as it always did."""
+    drafter = MTPDrafter(rig.backend)
+    seed(drafter, rig.backend, [5, 6, 7])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(2)
+    drafter.propose([1], [[5, 6, 7, 8, 9]], [3])
+    assert [c.position_ids for c in rig.language.mtp.calls] == [None] * 3
+
+
+def test_aligned_positions_continue_from_the_prompt(rig):
+    """Position of head entry *i* is the sequence position of the same token.
+
+    The context is eight tokens and the fold covers the last two, so the head's
+    first folded entry stands at sequence position six and the chain continues
+    from there: 6, 7 for the fold, then 8 and 9 for the two chain steps.
+    """
+    drafter = MTPDrafter(rig.backend, align_positions=True)
+    seed(drafter, rig.backend, [0, 1, 2, 3, 4, 5])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(2)
+    drafter.propose([1], [[0, 1, 2, 3, 4, 5, 6, 7]], [3])
+
+    positions = [
+        [int(v) for v in call.position_ids[0, 0].tolist()]
+        for call in rig.language.mtp.calls
+    ]
+    assert positions == [[6, 7], [8], [9]]
+
+
+def test_alignment_survives_a_second_cycle(rig):
+    """The base is recomputed per fold, so it cannot drift with the head."""
+    drafter = MTPDrafter(rig.backend, align_positions=True)
+    seed(drafter, rig.backend, [0, 1, 2, 3, 4, 5])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(2)
+    drafter.propose([1], [[0, 1, 2, 3, 4, 5, 6, 7]], [1])
+    rig.language.mtp.calls.clear()
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(3)
+    drafter.propose([1], [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], [1])
+
+    fold = rig.language.mtp.calls[0]
+    assert [int(v) for v in fold.position_ids[0, 0].tolist()] == [8, 9, 10]
+
+
+def test_a_head_cache_reset_resets_the_base(rig):
+    """A dropped head cache starts at position zero again, not mid-sequence."""
+    drafter = MTPDrafter(rig.backend, align_positions=True)
+    seed(drafter, rig.backend, [0, 1, 2, 3])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+    drafter.propose([1], [[0, 1, 2, 3, 4]], [1])
+    assert drafter._tracks[1].base == 4
+
+    # A truncation the drafter did not see: the head's offset no longer agrees
+    # with what the drafter folded, so the cache is dropped.
+    for cache in rig.backend.draft_state(1).mtp_layers:
+        cache.offset += 3
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+    drafter.propose([1], [[0, 1, 2, 3, 4, 5]], [1])
+    assert drafter._tracks[1].base == 0
+
+
+def test_alignment_does_not_change_the_drafted_tokens_shape(rig):
+    """Positions are an acceptance knob; the chain's shape is unchanged."""
+    plain = MTPDrafter(rig.backend)
+    seed(plain, rig.backend, [5, 6, 7])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+    unaligned = plain.propose([1], [[5, 6, 7, 8]], [3])[0]
+
+    rig.backend.states.clear()
+    aligned_drafter = MTPDrafter(rig.backend, align_positions=True)
+    seed(aligned_drafter, rig.backend, [5, 6, 7])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+    aligned = aligned_drafter.propose([1], [[5, 6, 7, 8]], [3])[0]
+
+    assert len(aligned.tokens) == len(unaligned.tokens) == 3
+
+
+# ---------------------------------------------------------------------------
+# A primed head cache (ROUND2 step 1)
+
+
+def test_a_primed_head_cache_is_adopted_rather_than_dropped(rig):
+    """Prefill may have folded the prompt in before the drafter ever ran.
+
+    The drafter's count of folded tokens is what the alignment check compares
+    the head's offset against, so a track that starts at zero reads a primed
+    cache as a corrupt one and throws the prompt away on the first cycle that
+    drafts. Starting from the cache's own offset is the whole fix.
+    """
+    state = rig.backend.draft_state(1)
+    state.mtp_layers[0].offset = 40  # what a prefill of a 41-token prompt leaves
+    drafter = MTPDrafter(rig.backend)
+
+    # The cycle that consumes the pending token drafts nothing, as always: the
+    # backbone has left no verify hidden yet.
+    drafter.propose([1], [list(range(41))], [3])
+    assert drafter._tracks[1].fed == 40
+    assert drafter.cache_resets == 0
+
+    state.mtp_hidden = hidden_block(1)
+    out = drafter.propose([1], [list(range(42))], [3])[0]
+    assert drafter.cache_resets == 0
+    assert len(out.tokens) == 3
+    assert drafter._tracks[1].fed == 41
+
+
+def test_an_unprimed_head_still_starts_at_zero(rig):
+    drafter = MTPDrafter(rig.backend)
+    drafter.propose([1], [[5, 6, 7]], [3])
+    assert drafter._tracks[1].fed == 0
+
+
+# ---------------------------------------------------------------------------
+# Clone against trim (ROUND2 step 1)
+
+
+def test_trim_mode_leaves_the_head_exactly_where_clone_mode_does(rig):
+    """Same drafts, same committed-only head. Only the cost differs."""
+    seen = {}
+    for mode in ("clone", "trim"):
+        rig.backend.states.clear()
+        rig.language.mtp.calls.clear()
+        drafter = MTPDrafter(rig.backend, chain_cache=mode)
+        seed(drafter, rig.backend, [5, 6, 7])
+        rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+        out = drafter.propose([1], [[5, 6, 7, 8]], [3])[0]
+        cache = rig.backend.draft_state(1).mtp_layers[0]
+        seen[mode] = (out.tokens, cache.offset, drafter.cache_resets)
+    assert seen["clone"] == seen["trim"]
+
+
+def test_trim_mode_rewinds_one_entry_per_chain_step(rig):
+    drafter = MTPDrafter(rig.backend, chain_cache="trim")
+    seed(drafter, rig.backend, [5, 6, 7])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+    drafter.propose([1], [[5, 6, 7, 8]], [4])
+    cache = rig.backend.draft_state(1).mtp_layers[0]
+    assert cache.trims == [3]
+    assert cache.extracts == 0
+
+
+def test_clone_mode_copies_and_never_trims(rig):
+    drafter = MTPDrafter(rig.backend, chain_cache="clone")
+    seed(drafter, rig.backend, [5, 6, 7])
+    rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+    drafter.propose([1], [[5, 6, 7, 8]], [4])
+    cache = rig.backend.draft_state(1).mtp_layers[0]
+    assert cache.extracts == 1
+    assert cache.trims == []
+
+
+def test_a_depth_one_chain_needs_neither(rig):
+    """One fold and no chain steps: nothing speculative touches the cache."""
+    for mode in ("clone", "trim"):
+        rig.backend.states.clear()
+        drafter = MTPDrafter(rig.backend, chain_cache=mode)
+        seed(drafter, rig.backend, [5, 6, 7])
+        rig.backend.draft_state(1).mtp_hidden = hidden_block(1)
+        drafter.propose([1], [[5, 6, 7, 8]], [1])
+        cache = rig.backend.draft_state(1).mtp_layers[0]
+        assert cache.extracts == 0 and cache.trims == []
+
+
+def test_an_unknown_chain_cache_is_refused_at_construction(rig):
+    with pytest.raises(ValueError, match="unknown MTP chain cache"):
+        MTPDrafter(rig.backend, chain_cache="borrow")

@@ -126,8 +126,16 @@ class ModelBackend(Protocol):
         *,
         want_logits: bool = False,
         snapshot: bool = False,
+        next_token: int | None = None,
     ) -> LogitsRef | None:
         """Process ``tokens`` into ``state``, appending to what it holds.
+
+        ``next_token`` is the token that follows this chunk in the sequence,
+        which prefill does not consume and does not need. A backend that folds
+        the prompt into a draft head's cache does need it: the head pairs the
+        hidden state at a position with the token after it, so the pair at the
+        chunk's last position is the only one the chunk cannot form alone. A
+        backend that does nothing with it may ignore it.
 
         Does not sync. Returns a logits reference for the final position only
         when ``want_logits`` (the last chunk of a prompt), otherwise ``None``:

@@ -19,6 +19,23 @@ OUT="${TITAN_OUT:-$HOME/inference-server/staging/w41}"
 WORDS="${WORDS:-11000}"
 mkdir -p "$OUT"
 
+
+# Wait until every titan serve process has exited and macOS has actually
+# reclaimed its image. Closing the port is not the same as releasing 73 GB:
+# starting the next arm before this returns overlaps two model images and swaps.
+wait_for_memory() {
+  local need_gb=${1:-85}
+  for _ in $(seq 1 90); do
+    if ! pgrep -f "titan.cli serve" >/dev/null 2>&1; then
+      local avail
+      avail=$(vm_stat | awk -v ps=$(sysctl -n hw.pagesize) '/Pages (free|inactive|speculative|purgeable)/ {gsub("\\.","",$NF); s+=$NF} END {printf "%d", s*ps/1073741824}')
+      [ "${avail:-0}" -ge "$need_gb" ] && return 0
+    fi
+    sleep 2
+  done
+  echo "memory not reclaimed after 180s (titan still running or available below ${need_gb} GB)"; return 1
+}
+
 stop() {
   local pids
   pids=$(lsof -nP -iTCP:8085 -sTCP:LISTEN -t 2>/dev/null)
@@ -30,6 +47,7 @@ stop() {
   pids=$(lsof -nP -iTCP:8085 -sTCP:LISTEN -t 2>/dev/null)
   [ -n "$pids" ] && kill -9 $pids 2>/dev/null
   sleep 2
+  pkill -f 'titan.cli serve' 2>/dev/null; wait_for_memory 85
 }
 
 trap stop EXIT

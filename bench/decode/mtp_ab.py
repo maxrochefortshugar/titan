@@ -117,8 +117,13 @@ class Client:
         content = payload["choices"][0]["message"]["content"] or ""
         return payload["usage"], elapsed, content
 
-    def metrics(self) -> dict:
-        return self._request("/metrics", timeout=60.0)
+    def metrics(self, window: int = 0) -> dict:
+        path = "/metrics" if not window else f"/metrics?window={int(window)}"
+        return self._request(path, timeout=60.0)
+
+    def cycles(self) -> int:
+        """Cumulative decode cycles, so a run can name its own window."""
+        return int(self.metrics().get("counters", {}).get("cycles", 0))
 
 
 def decode_view(metrics: dict) -> dict:
@@ -135,6 +140,10 @@ def decode_view(metrics: dict) -> dict:
         "draft_ms": round(stages.get("draft_ms", 0.0), 2),
         "other_ms": round(stages.get("other_ms", 0.0), 2),
         "host_syncs_per_cycle": round(decode.get("host_syncs_per_cycle", 0.0), 3),
+        "position_acceptance": [
+            round(v, 3) for v in metrics.get("position_acceptance", [])
+        ],
+        "accepted_histogram": metrics.get("accepted_histogram", {}),
     }
 
 
@@ -172,16 +181,66 @@ def run_long(client: Client, words: int, tokens: int) -> dict:
     }
 
 
+# Measured on this checkpoint: 11,000 words of seeded soup tokenises to 64,779
+# tokens. The sweep asks for contexts, not for words, so it converts here and
+# reports the prompt length the server actually saw.
+TOKENS_PER_WORD = 64779 / 11000
+
+
+def run_sweep(client: Client, contexts: list[int], tokens: int) -> list[dict]:
+    """Accepted tokens a cycle against context length, in one process.
+
+    One process on purpose: a model load per point would put a cold cache and a
+    cold set of kernels between the points, and the question here is whether
+    acceptance is a slope or a step, which is a question about the differences
+    rather than about any one number. Each point reads its own cycles back
+    through the metrics window, so the points do not average into each other.
+    """
+    rows = []
+    for index, context in enumerate(contexts):
+        # A different seed per point, so no point is a prefix of another, the
+        # prefix cache cannot serve the second half of the sweep, and a context
+        # repeated in the list is a genuine second measurement rather than a
+        # cache hit.
+        prompt = cold_prompt(
+            max(1, round(context / TOKENS_PER_WORD)),
+            seed=20260912 + context + 1000 * index,
+        )
+        before = client.cycles()
+        usage, elapsed, _ = client.complete(prompt, tokens)
+        after = client.cycles()
+        row = {
+            "context_target": context,
+            "point": index,
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "wall_s": round(elapsed, 1),
+            "cycles_measured": after - before,
+        }
+        row.update(decode_view(client.metrics(window=max(1, after - before))))
+        rows.append(row)
+        print(json.dumps(row), flush=True)
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arm", required=True)
-    parser.add_argument("--mode", choices=("short", "long", "lossless"), default="short")
+    parser.add_argument(
+        "--mode", choices=("short", "long", "lossless", "sweep"), default="short"
+    )
     parser.add_argument("--url", default=os.environ.get("TITAN_URL", DEFAULT_URL))
     parser.add_argument("--key-file", default=DEFAULT_KEY)
     parser.add_argument("--tokens", type=int, default=600)
     parser.add_argument("--words", type=int, default=11000)
     parser.add_argument("--lossless-tokens", type=int, default=400)
     parser.add_argument("--out", default="")
+    parser.add_argument(
+        "--contexts",
+        default="8192,16384,32768,49152,63488,64779,67584",
+        help="comma-separated target context lengths for --mode sweep",
+    )
+    parser.add_argument("--sweep-tokens", type=int, default=200)
     args = parser.parse_args()
 
     client = Client(args.url, args.key_file)
@@ -190,13 +249,28 @@ def main() -> int:
         print(text)
         return 0
 
+    if args.mode == "sweep":
+        contexts = [int(v) for v in args.contexts.split(",") if v.strip()]
+        rows = run_sweep(client, contexts, args.sweep_tokens)
+        if args.out:
+            with open(args.out, "a") as handle:
+                for row in rows:
+                    row["arm"] = args.arm
+                    row["mode"] = "sweep"
+                    handle.write(json.dumps(row) + "\n")
+        return 0
+
     if args.mode == "short":
+        before = client.cycles()
         result = run_short(client, args.tokens)
+        window = max(1, client.cycles() - before)
     else:
+        before = client.cycles()
         result = run_long(client, args.words, 300)
+        window = max(1, client.cycles() - before)
     result["arm"] = args.arm
     result["mode"] = args.mode
-    result.update(decode_view(client.metrics()))
+    result.update(decode_view(client.metrics(window=window)))
     line = json.dumps(result)
     print(line, flush=True)
     if args.out:
