@@ -153,3 +153,16 @@ Long-context concurrency (4c, 68k prompts): dense batched attention (today) vs t
 | fine 512 b | 17.76 / 2.61 / 1.66 / 3.02 / 1.63 / 1.54 | same as a | 2.61 |
 
 Reproducible: the fine tail stores on the 512 grid for most turns (26112, 29184, 30720, 31744) and turn 3 gains 0.8 s, but the store after turn 3 is rejected every time ("Rejecting split-GDN placeholder block 150 because its recurrent checkpoint was not committed" at 27648), so turn 4 loses 0.9 s, and turn 2 is 0.9 s slower than base at an identical cached count. Net worse. Not deployed; second pass dispatched with this log.
+
+## 2026-09-12 16:50: round 6, decode profile and cache boundary v2
+
+Decode profile (round4/decode-profile, OMLX_DECODE_PROFILE=1): profiler overhead under 1% (prof-off median 89.6 tok/s, prof-on 89.1). Per-cycle budget at short context: 26.9 ms per cycle, of which the verify forward is 20.3 ms (75%, 325 GB/s of effective weight traffic, 45% of the measured 718 GB/s ceiling, 48 async_evals per cycle), the acceptance host sync 3.5 ms (13%), the draft chain 2.9 ms (2.2 ms of it the draft eval). Three accepted tokens per cycle gives 111 tok/s, two gives 75. At 64k context the accepted median falls to one token per cycle: the long-context decode gap is acceptance, not row cost. Sync mode (every stage evaluated) costs 5% (84.9). These numbers define the Titan decode loop targets.
+
+Cache boundary v2 (round4/cache-boundary, OMLX_CACHE_FINE_TAIL=512, two-step cut, emission guard, backlog check), same 6-turn 32k probe, cold SSD cache per arm:
+
+| arm | per-turn latency (s) | cached tokens per turn | median |
+|---|---|---|---|
+| base | 16.4 / 2.13 / 3.09 / 2.59 / 2.17 / 1.59 | 0 / 24576 / 24576 / 26624 / 28672 / 30720 | 2.59 |
+| fine 512 v2 | 17.5 / 2.62 / 1.89 / 2.10 / 1.66 / 1.61 | 0 / 24576 / 26112 / 27648 / 29184 / 30720 | 2.10 |
+
+Every store landed on the 512 grid, no rejected placeholder blocks, each extra GDN snapshot cost 4 to 5 ms with the writer never backed up. Turn 2 still pays about half a second for the extra cut on a cold-cache session; turns 3 to 5 win 0.5 to 1.2 s each. Warm-turn total 11.6 s against 9.9 s. Deployed: import-time patch added to prod/run-omlx.sh. Takes effect at the next production restart.

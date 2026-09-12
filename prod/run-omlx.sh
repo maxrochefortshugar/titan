@@ -12,7 +12,9 @@ export OMLX_QWEN4_GDN_NORM_GATE=1        # fused GDN grouped norm + sigmoid gate
 export OMLX_WSUM_TOPK10=1 OMLX_WSUM_TOPK10_MIN_TOKENS=64   # fused MoE weighted sum for top_k=10, prefill only (bit-identical); decode keeps stock
 export OMLX_MTP_SHORTLIST_DRAFT=1        # MTP draft steps 2..3 on a top-K shortlist head (verified output identical)
 export OMLX_MOE_INT8_PREFILL=1 OMLX_MOE_INT8_SKIP_DOWN=1   # int8 x int4 expert gather at prefill, gate_up only (~7.5 GB of tables)
-export OMLX_ROUND2_IMPORT_PATCHES="$R2/mtp/patch.py:install_shortlist_draft"
+R4="$HOME/inference-server/kernels/round4"
+export OMLX_CACHE_FINE_TAIL=512          # store prefix-cache tail on a 512 grid (v2: two-step cut, GDN snapshot at every fine boundary); warm-turn median 2.59 -> 2.10 s
+export OMLX_ROUND2_IMPORT_PATCHES="$R2/mtp/patch.py:install_shortlist_draft,$R4/cache-boundary/patch.py"
 # Round 4 (2026-09-12): exact, zero-memory extras, +3% prefill paired on the workbench
 R3="$HOME/inference-server/kernels/round3"
 export OMLX_QWEN4_HC_FUSE2=1             # fused prefill hyper-connection block (bit-identical, 11 -> 6 launches)
