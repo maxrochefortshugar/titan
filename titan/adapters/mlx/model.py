@@ -78,6 +78,15 @@ class VerifyResult:
     gdn_states: Optional[list]
 
 
+@dataclass
+class MTPStep:
+    """What one call into the MTP head produced. See :meth:`mtp_step`."""
+
+    logits: mx.array
+    mixed: mx.array
+    streams: mx.array
+
+
 class TitanQwenFlashNext:
     """Titan's handle on the vendored Qwen3.8-Flash-Next model.
 
@@ -175,12 +184,19 @@ class TitanQwenFlashNext:
         position of the final chunk only; skipping the head elsewhere is worth
         48-95 ms per chunk on this model.
 
-        ``want_hidden`` is a trap and the backend never sets it.  Asking the
-        vendored model for hidden states sets ``capture_layer_ids``, which is
-        what turns on its ``target_verify`` arm, and that arm runs one kernel
-        launch per token: it is built for a verify block a few columns wide.
-        Over a prefill chunk it is three orders of magnitude slower, measured
-        at 200 seconds for a 150-token chunk against 0.1 seconds without.
+        ``want_hidden`` used to be a trap.  Asking the vendored model for
+        hidden states sets ``capture_layer_ids``, which used to turn on its
+        ``target_verify`` arms whatever the block's width, and those arms run
+        one kernel launch per row: they are built for a verify block a few
+        columns wide.  Over a prefill chunk that was three orders of magnitude
+        slower, measured at 200 seconds for a 150-token chunk against 0.1
+        without.  The arms are now chosen by width rather than by the capture
+        (``_narrow_verify_block``, and ``docs/architecture/FORWARD.md``
+        section 3), so a chunk gets chunk-shaped work and its hidden state.
+        A wide chunk does not carry the recurrent intermediates, which are a
+        verify-block facility and cost one state per recurrent layer per row;
+        rollback is unaffected because every width the engine verifies at is
+        narrow.
         """
         if state.is_batched:
             raise StateError("prefill runs one sequence per turn")
@@ -313,6 +329,55 @@ class TitanQwenFlashNext:
                 "captured no recurrent intermediates"
             )
         rollback(state.layers, gdn_states, accepted, width)
+
+    def mtp_step(
+        self,
+        hidden: mx.array,
+        tokens: Sequence[int] | mx.array,
+        cache: list,
+    ) -> "MTPStep":
+        """One MTP head call, returning both hidden states the chain can reuse.
+
+        ``mtp_forward`` throws away everything the head produced except the
+        logits, and a chained drafter needs one of two hidden states to
+        continue from, so this runs the head module directly and keeps both.
+
+        * ``mixed`` is the head's output after ``hyper_connection_mixer``,
+          which is this architecture's final norm and the tensor the logits are
+          read from. Shape ``[B, T, hidden_size]``.
+        * ``streams`` is the head layer's output before that mixer, one
+          residual stream per hyper connection. Shape
+          ``[B, T, hc_count * hidden_size]``, which is the shape
+          ``fuse_inputs`` takes directly, and it is what the backbone leaves on
+          ``state.mtp_hidden``.
+
+        Logits are for the last position only: a fold over the whole committed
+        run needs every position's KV in the head cache, but only the last
+        position predicts anything the drafter has not already committed.
+        """
+        mtp = self.language_model.get_mtp_module()
+        if mtp is None:
+            raise StateError("this model was loaded without the MTP head")
+        ids = _as_rows(tokens)
+        embed = self.language_model.model.embed_tokens
+        mixed, streams = mtp(hidden, ids, embed, cache)
+        source = mixed[:, -1:, :]
+        if self.args.tie_word_embeddings:
+            logits = embed.as_linear(source)
+        else:
+            logits = self.language_model.lm_head(source)
+        return MTPStep(logits=logits, mixed=mixed, streams=streams)
+
+    def mtp_lift(self, mixed: mx.array) -> mx.array:
+        """Lift a post-mixer hidden ``[B, T, H]`` into the head's stream width.
+
+        The trunk does exactly this to the token embedding on the way in
+        (``mx.tile(hidden_states, (1, 1, hc_count))``, ``language.py:2748``), so
+        it is the architecture's own way of turning one vector into the hyper
+        connection streams. ``fuse_inputs`` then applies ``pre_fc_norm_hidden``
+        to the result, which is the re-normalisation the vLLM chain relies on.
+        """
+        return mx.tile(mixed, (1, 1, self.args.hc_count))
 
     def mtp_draft(
         self,

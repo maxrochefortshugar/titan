@@ -133,6 +133,18 @@ class MLXModelBackend:
     def truncate_state(self, state: StateHandle, length: int) -> None:
         self._state(state).truncate(length)
 
+    def draft_state(self, state: StateHandle) -> ModelState:
+        """Resolve a handle for the drafter. Draft plumbing, nothing else.
+
+        The ``Drafter`` port is handed opaque handles, and the MTP drafter is
+        the one implementation that has to reach the device arrays behind one:
+        it folds the hidden state the last verify left on the state and it
+        appends to the head's own KV. Resolving a handle is the backend's job
+        and nobody else's, so it is a method here rather than a table the
+        drafter is handed a reference to.
+        """
+        return self._state(state)
+
     def _state(self, handle: StateHandle) -> ModelState:
         try:
             return self._states[int(handle)]

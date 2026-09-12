@@ -77,6 +77,10 @@ __all__ = [
     "SampledAcceptance",
     "AcceptanceEstimator",
     "DepthController",
+    "CycleCostModel",
+    "PositionAcceptance",
+    "ExpectedValueDepthController",
+    "SEED_CYCLE_COST_MS",
     "TextEmitter",
     "EmitResult",
     "NullProfiler",
@@ -346,6 +350,318 @@ class DepthController:
         return self.plan_depth(
             n_sequences, self.estimator.mean_accepted, self.rows_budget
         )
+
+
+# ---------------------------------------------------------------------------
+# the expected-value depth policy
+# ---------------------------------------------------------------------------
+
+
+SEED_CYCLE_COST_MS: Mapping[int, float] = {1: 16.2, 2: 19.6, 4: 27.6, 6: 36.2}
+"""Measured cycle wall time against verify row width, batch of one.
+
+The integration report's numbers, and the only thing the policy knows before it
+has run a cycle of its own. They are a seed and not a constant: the same table
+on a warm machine, a cold one, or at 64k of context is a different table, which
+is the whole reason the model is refitted at runtime.
+"""
+
+
+class CycleCostModel:
+    """Cycle milliseconds as a straight line in verify row width.
+
+    A line rather than a table, for two reasons. The policy has to price widths
+    it has never run -- that is the entire point of asking whether depth 4 is
+    worth it while running depth 2 -- and a table can only interpolate between
+    the widths it happens to hold. And the shape really is a line here: the
+    fixed cost is the host graph build (15.8 of the 18.1 ms measured at width
+    1) and the marginal cost is one more row through the same forward, so the
+    intercept is Python and the slope is the GPU.
+
+    Observations are decayed rather than windowed. Thermal drift alone was
+    measured at 10 to 16% on this machine, so a cost table that averages an
+    hour of cycles is describing a machine that is no longer there.
+    """
+
+    def __init__(
+        self,
+        *,
+        seed: Mapping[int, float] = SEED_CYCLE_COST_MS,
+        half_life: float = 512.0,
+        seed_weight: float = 8.0,
+    ) -> None:
+        if half_life <= 0:
+            raise ValueError("half_life must be positive")
+        self._decay = 0.5 ** (1.0 / half_life)
+        self._seed = dict(seed)
+        self._seed_weight = float(seed_weight)
+        self._n = 0.0
+        self._sx = 0.0
+        self._sy = 0.0
+        self._sxx = 0.0
+        self._sxy = 0.0
+        for width, ms in self._seed.items():
+            self._add(float(width), float(ms), self._seed_weight)
+        self.observations = 0
+
+    def _add(self, x: float, y: float, weight: float) -> None:
+        self._n += weight
+        self._sx += weight * x
+        self._sy += weight * y
+        self._sxx += weight * x * x
+        self._sxy += weight * x * y
+
+    def observe(self, width: int, wall_ms: float) -> None:
+        """Record one cycle. Outliers are dropped, not smoothed.
+
+        A cycle that ran ten times its predicted cost is a prefill sharing the
+        thread, an SSD stall or a snapshot store, and folding it into the slope
+        would price every future width off one event that had nothing to do
+        with the row count.
+        """
+        if width < 1 or wall_ms <= 0.0:
+            return
+        predicted = self.ms(width)
+        if wall_ms > 4.0 * predicted:
+            return
+        for key in ("_n", "_sx", "_sy", "_sxx", "_sxy"):
+            setattr(self, key, getattr(self, key) * self._decay)
+        self._add(float(width), float(wall_ms), 1.0)
+        self.observations += 1
+
+    @property
+    def fit(self) -> tuple[float, float]:
+        """``(intercept, slope)`` in milliseconds."""
+        denominator = self._n * self._sxx - self._sx * self._sx
+        if denominator <= 1e-9:
+            return self._seed_fit()
+        slope = (self._n * self._sxy - self._sx * self._sy) / denominator
+        intercept = (self._sy - slope * self._sx) / self._n
+        if slope <= 0.0 or intercept <= 0.0:
+            # A non-positive slope says wider cycles are free, which they are
+            # not; it says the observations are degenerate. The seed is a worse
+            # description of this machine and a better description of physics.
+            return self._seed_fit()
+        return intercept, slope
+
+    def _seed_fit(self) -> tuple[float, float]:
+        widths = list(self._seed)
+        if len(widths) < 2:
+            return (SEED_CYCLE_COST_MS[1], 4.0)
+        n = float(len(widths))
+        sx = sum(widths)
+        sy = sum(self._seed.values())
+        sxx = sum(w * w for w in widths)
+        sxy = sum(w * self._seed[w] for w in widths)
+        slope = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+        return (sy - slope * sx) / n, slope
+
+    def ms(self, width: int) -> float:
+        intercept, slope = self.fit
+        return max(1e-3, intercept + slope * max(1, int(width)))
+
+
+class PositionAcceptance:
+    """P(draft *i* is accepted | the chain reached position *i*).
+
+    Per position, not one number, because the whole reason a depth policy can
+    beat a fixed depth is that positions are not alike: vLLM's DSpark
+    measurement is that the seventh drafted token survives under 10% of the
+    time against over 70% for the first. A single mean cannot express that, and
+    a policy that plans depth from one is planning against an average of a
+    curve it could have measured.
+
+    Conditional on reaching the position, so the expected committed tokens is a
+    running product and positions past the first rejection are not counted as
+    failures. A chain of eight that dies at two says nothing about position
+    five and this estimator says nothing about it either.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_depth: int = 8,
+        half_life: float = 64.0,
+        prior: float = 0.7,
+        prior_weight: float = 2.0,
+    ) -> None:
+        self.max_depth = int(max_depth)
+        self._decay = 0.5 ** (1.0 / max(1e-9, half_life))
+        self._prior = float(prior)
+        self._prior_weight = float(prior_weight)
+        self._hits = [prior * prior_weight] * (self.max_depth + 1)
+        self._trials = [prior_weight] * (self.max_depth + 1)
+
+    def observe(self, n_accepted: int, n_drafted: int) -> None:
+        if n_drafted <= 0:
+            return
+        reached = min(n_accepted + 1, n_drafted)
+        for position in range(1, reached + 1):
+            if position > self.max_depth:
+                break
+            self._hits[position] *= self._decay
+            self._trials[position] *= self._decay
+            self._trials[position] += 1.0
+            if position <= n_accepted:
+                self._hits[position] += 1.0
+
+    def probability(self, position: int) -> float:
+        if position < 1:
+            return 1.0
+        index = min(position, self.max_depth)
+        trials = self._trials[index]
+        if trials <= 0.0:
+            return self._prior
+        return min(1.0, max(0.0, self._hits[index] / trials))
+
+    def expected_committed(self, depth: int) -> float:
+        """Tokens a cycle at this depth commits, drafts plus the bonus."""
+        total = 1.0
+        survival = 1.0
+        for position in range(1, int(depth) + 1):
+            survival *= self.probability(position)
+            total += survival
+        return total
+
+    @property
+    def mean_accepted(self) -> float:
+        return self.expected_committed(self.max_depth) - 1.0
+
+
+class ExpectedValueDepthController:
+    """Depth by expected committed tokens per millisecond of cycle.
+
+    The rule the fixed and the ``round(mean) + 1`` policies both approximate,
+    written out:
+
+        k* = argmax_k  E[committed | k] / cycle_ms(k + 1)
+
+    with ``E`` from :class:`PositionAcceptance` and ``cycle_ms`` from
+    :class:`CycleCostModel`. Both sides are measured on the running machine and
+    neither reads the drafter's own confidence, which is the difference between
+    this and the confidence-gated depth the overlay measured at -6%. TapOut's
+    survey is that gates keyed on the draft's certainty lose (AdaEDL at 0.93x,
+    SpecDec++ at 0.99x); the DSpark result is that a profiled cost table wins.
+    The usual effect here is to draft *shallower*, which is the opposite
+    intervention to the one that failed.
+
+    Estimates are per sequence. A 64k session and a 200-token one share a
+    process, a machine and a cost table, and they do not share an acceptance
+    curve; averaging them gives both the wrong depth. The cost table is shared
+    because it describes the machine, and the acceptance curve is not because
+    it describes the text.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_depth: int = 3,
+        min_depth: int = 0,
+        adaptive: bool = True,
+        window: int = 64,
+        rows_budget: int = 32,
+        cost: CycleCostModel | None = None,
+        max_tracked: int = 64,
+    ) -> None:
+        if min_depth < 0 or max_depth < min_depth:
+            raise ValueError("need 0 <= min_depth <= max_depth")
+        self.max_depth = int(max_depth)
+        self.min_depth = int(min_depth)
+        self.adaptive = bool(adaptive)
+        self.rows_budget = int(rows_budget)
+        self.window = int(window)
+        self.cost = cost or CycleCostModel()
+        self.max_tracked = int(max_tracked)
+        # Kept so anything reading the old controller's rolling mean still
+        # finds one, and so the two policies can be compared on one number.
+        self.estimator = AcceptanceEstimator(window=window, initial=float(max_depth))
+        self.shared = self._new_acceptance()
+        self._by_sequence: dict[int, PositionAcceptance] = {}
+        self.chosen: list[int] = []
+
+    def _new_acceptance(self) -> PositionAcceptance:
+        return PositionAcceptance(
+            max_depth=max(1, self.max_depth), half_life=float(self.window)
+        )
+
+    def acceptance_for(self, sequence_id: int) -> PositionAcceptance:
+        estimate = self._by_sequence.get(int(sequence_id))
+        if estimate is None:
+            estimate = self._new_acceptance()
+            self._by_sequence[int(sequence_id)] = estimate
+            if len(self._by_sequence) > self.max_tracked:
+                self._by_sequence.pop(next(iter(self._by_sequence)))
+        return estimate
+
+    # -- the policy --------------------------------------------------------
+    def best_depth(self, acceptance: PositionAcceptance, ceiling: int) -> int:
+        """The depth that maximises committed tokens per millisecond."""
+        floor = min(self.min_depth, ceiling)
+        if ceiling <= floor:
+            return floor
+        best = floor
+        best_value = acceptance.expected_committed(floor) / self.cost.ms(floor + 1)
+        for depth in range(floor + 1, ceiling + 1):
+            value = acceptance.expected_committed(depth) / self.cost.ms(depth + 1)
+            if value > best_value:
+                best, best_value = depth, value
+        return best
+
+    def _ceiling(self, n_sequences: int, rows_budget: int) -> int:
+        per_sequence = max(0, rows_budget // max(1, n_sequences) - 1)
+        return max(self.min_depth, min(self.max_depth, per_sequence))
+
+    # -- the Verifier port -------------------------------------------------
+    def plan_depth(
+        self,
+        n_sequences: int,
+        recent_acceptance: float,
+        rows_budget: int,
+    ) -> list[int]:
+        if n_sequences <= 0:
+            return []
+        ceiling = self._ceiling(n_sequences, rows_budget)
+        if not self.adaptive:
+            return [min(self.max_depth, ceiling)] * n_sequences
+        return [self.best_depth(self.shared, ceiling)] * n_sequences
+
+    def record(self, profile: CycleProfile, outcomes: Sequence[VerifyOutcome]) -> None:
+        self.estimator.observe(outcomes)
+        for outcome in outcomes:
+            if outcome.n_drafted <= 0:
+                continue
+            self.shared.observe(len(outcome.accepted), outcome.n_drafted)
+            self.acceptance_for(int(outcome.sequence_id)).observe(
+                len(outcome.accepted), outcome.n_drafted
+            )
+        # One sequence at a time is the only composition the seed table
+        # describes, and it is the one the cost question is asked about. A
+        # cycle of four sequences is priced by the same line, which is an
+        # approximation the policy states rather than hides.
+        if profile.n_sequences == 1 and profile.n_rows >= 1 and profile.wall_ms > 0:
+            self.cost.observe(int(profile.n_rows), float(profile.wall_ms))
+
+    # -- what the cycle calls ---------------------------------------------
+    def next_depths(self, n_sequences: int) -> list[int]:
+        return self.plan_depth(
+            n_sequences, self.estimator.mean_accepted, self.rows_budget
+        )
+
+    def next_depths_for(self, sequence_ids: Sequence[int]) -> list[int]:
+        """Per-sequence depths. Used when the cycle can name its sequences."""
+        n = len(sequence_ids)
+        if n == 0:
+            return []
+        ceiling = self._ceiling(n, self.rows_budget)
+        if not self.adaptive:
+            depths = [min(self.max_depth, ceiling)] * n
+        else:
+            depths = [
+                self.best_depth(self.acceptance_for(int(s)), ceiling)
+                for s in sequence_ids
+            ]
+        self.chosen = depths
+        return depths
 
 
 # ---------------------------------------------------------------------------
@@ -862,13 +1178,27 @@ class MTPDecodeCycle(_BaseCycle):
         )
 
     # -- steps -------------------------------------------------------------
+    def _plan_depths(self, batch: Sequence[SequenceState]) -> list[int]:
+        """Ask the controller for a depth per sequence.
+
+        Two shapes of controller, one call site. The ``Verifier`` port only
+        promises ``plan_depth(n_sequences, ...)``, which cannot express a
+        per-sequence answer; a controller that keeps a per-sequence acceptance
+        curve offers ``next_depths_for`` as well, and the difference matters
+        the moment a 64k session shares the batch with a short one.
+        """
+        per_sequence = getattr(self.controller, "next_depths_for", None)
+        if per_sequence is not None:
+            return list(per_sequence([int(s.sequence_id) for s in batch]))
+        return list(self.controller.next_depths(len(batch)))
+
     def _propose(
         self, batch: Sequence[SequenceState]
     ) -> tuple[dict[int, tuple[int, ...]], int]:
         if self.drafter is None:
             return {}, 0
         depths = []
-        for sequence, depth in zip(batch, self.controller.next_depths(len(batch))):
+        for sequence, depth in zip(batch, self._plan_depths(batch)):
             depth = min(depth, self.draft_budget(sequence))
             cap = self.first_cycle_depth(sequence)
             if cap >= 0:
@@ -933,7 +1263,6 @@ class MTPDecodeCycle(_BaseCycle):
         for sequence in batch:
             self.stage_prompt_end(sequence)
 
-        self.controller.record(profile, outcomes)
         if self.drafter is not None and hasattr(self.drafter, "observe"):
             self.drafter.observe(outcomes)
 
@@ -948,5 +1277,11 @@ class MTPDecodeCycle(_BaseCycle):
             tokens_committed=committed,
             tokens_drafted=drafted,
         )
+        # After the profile is finished, not before: the depth policy prices
+        # widths against the cycle's own wall time, and the backend's half of
+        # the profile does not have one. A policy fitted to the verify time
+        # alone would price away the 15.8 ms of host graph build that is most
+        # of what a narrow cycle costs.
+        self.controller.record(profile, outcomes)
         self.profiler.cycle(profile)
         return CycleResult(tuple(outcomes), tuple(events), tuple(finished), profile)

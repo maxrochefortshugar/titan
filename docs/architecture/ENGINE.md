@@ -21,9 +21,9 @@ loop = EngineLoop(
     cycle=MTPDecodeCycle(
         backend=mlx_backend,
         tokenizer=tokenizer,
-        drafter=mtp_drafter,      # Drafter, or None for the M1 plain loop
+        drafter=MTPDrafter(backend, chain="head_output"),   # or None
         ngram=ngram_reader,       # NgramReader, optional
-        verifier=DepthController(max_depth=3, rows_budget=32),
+        verifier=ExpectedValueDepthController(max_depth=6, rows_budget=32),
         profiler=profiler,
     ),
     config=AdmissionConfig(...),  # flattened from TitanConfig
@@ -95,8 +95,8 @@ what makes the parity test between them mean something.
 
 ## 4. One cycle
 
-    depth   -> DepthController.plan_depth from the rolling acceptance estimate,
-               clamped by the row budget and by what is left of max_tokens
+    depth   -> the depth policy, per sequence, from its acceptance curve and
+               the cost table, clamped by the row budget and by max_tokens
     draft   -> Drafter.propose, no host sync
     prefetch-> NgramReader.prefetch for the draft rows, before the forward
     verify  -> ModelBackend.verify, one padded row block, one host sync
@@ -117,15 +117,89 @@ committed past the budget has to be truncated away, and a truncation inside the
 verify block lands below the snapshot that block staged, which the backend is
 right to refuse. oMLX clamps in the same place for the same reason.
 
-**Adaptive depth.** `depth = round(mean_accepted) + 1`, clamped to
-`[min_depth, max_depth]` and to `rows_budget // n_sequences - 1`. The `+1` makes
-it self-correcting: a cycle that accepted everything has no evidence about the
-depth above it, so it spends one row to find out, and a cycle that accepts
-nothing falls to the floor within a window. The estimator is a window rather
-than an EWMA because the question is "how many of the last N drafts stuck",
-which a window answers without a time constant nobody can name. At 64k the
-measured accepted median is 1, so the estimator has to fall as fast as the
-context grows.
+### The drafter
+
+`titan/adapters/mlx/drafter.py`. The Lightning MTP head is one sparse-attention
+layer that predicts token *t+2* from the backbone's residual stream at position
+*t* and the embedding of token *t+1*. One proposal is:
+
+    fold   -> one head call over every token the last cycle committed, against
+              the persistent head cache, logits kept for the last position only
+    chain  -> depth-1 further calls, each re-entering the head on its own
+              output hidden, against a clone of the head cache
+    gate   -> drop the tail past the first draft below p_min
+    read   -> one mx.async_eval and one .tolist() for the whole batch
+
+**The fold is the whole alignment story.** The obvious implementation folds one
+position, the pending token and the hidden beside it. Then the head's KV never
+sees the tokens the cycle accepted, its positions drift from the sequence's by
+the accepted count every cycle, and acceptance decays with nothing in the
+profile naming why. So the fold covers the entire committed run: the verify
+left a hidden state for every column of its block, the accepted prefix of that
+block is exactly the run, and folding all of it appends one head entry per
+committed token. The head cache stays a committed-only mirror of the sequence.
+
+That is also why rollback of the head is a non-question. Steps 2..k run against
+a clone (`QSAKVCache.extract`, one layer, two kv heads, one row), so nothing a
+rejected draft produced is ever history. The drafter checks the head's offset
+against its own count of folded tokens each cycle and drops the head cache when
+they disagree, which happens when the stop path's `truncate_state` trims the
+head by the trunk's delta. Dropping it costs acceptance for a cycle and cannot
+cost correctness: only `verify` decides what is committed.
+
+**Two chain forms, one switch.** `speculation.mtp_chain`. `head_output` is the
+default and is vLLM's form: step *i+1* is fed the head's own output hidden
+after the head's final norm, which in this architecture is
+`hyper_connection_mixer`, lifted back to hyper-connection width the same way
+the trunk lifts a token embedding, and `pre_fc_norm_hidden` is re-applied on
+the way in. `omlx` re-enters on the head layer's pre-mixer streams instead.
+EAGLE 3.1 credits the first form with long-context acceptance, so the two are
+measured against each other rather than argued about. On this checkpoint the
+`omlx` form wins, twice: 2.24 and 2.26 accepted tokens a cycle against 2.12 and
+2.12, 75.5% acceptance against 71.4%. `bench/decode/README.md` holds the table
+and the caveat.
+
+**One sync.** Every sequence's chain lands in one float32 array -- draft ids are
+exact below 2^24 and the vocabulary is 248,320 -- and crosses to the host once
+per cycle, in `_sync_and_read`. The chain itself never syncs: step *i+1* is fed
+the previous step's argmax as a device array.
+
+### Depth by expected value
+
+`ExpectedValueDepthController` replaces `round(mean_accepted) + 1`:
+
+    k* = argmax_k  E[committed | k] / cycle_ms(k + 1)
+
+`E` comes from `PositionAcceptance`, a decayed estimate of P(draft *i* accepted
+| the chain reached *i*), kept **per sequence**: a 64k session and a 200-token
+one share a process and a machine, not an acceptance curve, and averaging them
+gives both the wrong depth. Positions are not alike -- DSpark measured the
+seventh drafted token surviving under 10% of the time against over 70% for the
+first -- so a single mean cannot express the thing the policy is choosing over.
+
+`cycle_ms` comes from `CycleCostModel`, a decayed least-squares line in row
+width, seeded with the measured 16.2/19.6/27.6/36.2 ms at widths 1/2/4/6 and
+refitted from every batch-of-one `CycleProfile`. A line rather than a table
+because the policy has to price widths it has never run, and because the shape
+really is a line here: the intercept is the host graph build and the slope is
+the marginal row. Cycles costing more than four times their prediction are
+dropped rather than smoothed; that is a prefill sharing the thread, not a row.
+
+Neither side reads the drafter's own confidence, which is the difference
+between this and the confidence-gated depth the overlay measured at -6%. That
+gate drafted *deeper* when the head was sure; this policy's usual effect is to
+draft shallower, and at an accepted median of 1 it chooses depth 0 and stops
+paying for speculation at all. `mtp_depth_min` is the fixed policy's floor;
+the adaptive policy's floor is zero, because not drafting has to be one of the
+options it can price.
+
+**The probability floor.** `speculation.draft_p_min`, llama.cpp's gate: stop
+the chain past a draft whose top-token probability is below the floor. Measured
+there at +20.4% with acceptance *falling* and mean run length rising, which is
+the right metric because run length is what the cycle spends rows on. It cannot
+save the draft compute -- a device-side early exit would mean a ragged row
+block, which fights lockstep verify -- but it saves the verify column, which is
+the expensive half. Zero disables it and also skips the softmax that reads it.
 
 ## 5. Stop conditions
 
