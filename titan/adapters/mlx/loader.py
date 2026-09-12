@@ -398,6 +398,11 @@ def load_model(
         fuse_gate_up=fuse_gate_up,
     )
     model = Model(config)
+    if fuse_gate_up:
+        # Before quantisation: the plan's quant specs are keyed by the fused
+        # path, so the fused module must exist when the predicate runs.
+        fused_modules = fuse_switch_glu_modules(model)
+        logger.info("fused gate/up on %d SwitchGLU modules", fused_modules)
 
     def class_predicate(path, module):
         spec = plan.quant_spec(path)
@@ -417,3 +422,37 @@ def load_model(
     model.eval()
     logger.info("loaded %s (%s)", model_dir.name, plan_summary(plan))
     return model, plan
+
+
+def fuse_switch_glu_modules(model) -> int:
+    """Restructure every SwitchGLU so it owns one ``gate_up_proj`` module.
+
+    The plan writes the routed experts in the fused [gate | up] layout, so the
+    module tree has to carry a single projection of doubled output width before
+    ``load_weights`` binds the arrays (strict loading checks names and shapes).
+    The still-lazy initial parameters are concatenated on the output axis and
+    the gate module is reused as the container, so quantisation attributes
+    (bits, group size, mode) carry over. Nothing is evaluated here. Returns the
+    number of modules fused.
+    """
+    from .vendor.mlx_lm.models.switch_layers import SwitchGLU
+
+    count = 0
+    for _, module in model.named_modules():
+        if not isinstance(module, SwitchGLU):
+            continue
+        if "gate_up_proj" in module or "gate_proj" not in module or "up_proj" not in module:
+            continue
+        gate, up = module.gate_proj, module.up_proj
+        for name in ("weight", "scales", "biases", "bias"):
+            g = gate.get(name) if hasattr(gate, "get") else None
+            u = up.get(name) if hasattr(up, "get") else None
+            if g is None or u is None:
+                continue
+            axis = -1 if name == "bias" else 1
+            setattr(gate, name, mx.concatenate([g, u], axis=axis))
+        module.gate_up_proj = gate
+        del module.gate_proj
+        del module.up_proj
+        count += 1
+    return count
