@@ -1,0 +1,98 @@
+{
+ "lifted_from": {
+  "_splitmix64": "language.py:1877",
+  "_build_layer_multipliers": "language.py:1884",
+  "_is_prime": "language.py:1898",
+  "_find_nth_prime_after": "language.py:1909",
+  "_shift_right_ignore_eos": "language.py:2603",
+  "_ngram_indices": "language.py:2634"
+ },
+ "multipliers_match": true,
+ "multipliers": [
+  "23703573157769",
+  "20109073645365",
+  "8052911324071"
+ ],
+ "head_vocab_sizes": [
+  20000003,
+  20000023,
+  20000033,
+  20000047,
+  20000059,
+  20000063,
+  20000069,
+  20000077,
+  20000081,
+  20000093,
+  20000107,
+  20000147,
+  20000153,
+  20000159,
+  20000161,
+  20000171
+ ],
+ "total_vocab_size": 320001446,
+ "padded_vocab_size": 320001536,
+ "cases": [
+  {
+   "case": "random_2048",
+   "shape": [
+    2048,
+    16
+   ],
+   "identical": true,
+   "min_row": 17884,
+   "max_row": 319993550,
+   "max_abs_diff": 0
+  },
+  {
+   "case": "random_with_eos",
+   "shape": [
+    2048,
+    16
+   ],
+   "identical": true,
+   "min_row": 5091,
+   "max_row": 319996337,
+   "max_abs_diff": 0
+  },
+  {
+   "case": "repetitive",
+   "shape": [
+    1480,
+    16
+   ],
+   "identical": true,
+   "min_row": 926894,
+   "max_row": 319987751,
+   "max_abs_diff": 0
+  },
+  {
+   "case": "low_ids",
+   "shape": [
+    512,
+    16
+   ],
+   "identical": true,
+   "min_row": 0,
+   "max_row": 319993337,
+   "max_abs_diff": 0
+  },
+  {
+   "case": "all_eos",
+   "shape": [
+    64,
+    16
+   ],
+   "identical": true,
+   "min_row": 9663979,
+   "max_row": 300986548,
+   "max_abs_diff": 0
+  }
+ ],
+ "manifest_rows": 320001536,
+ "padded_matches_manifest": true,
+ "chunked_equals_whole": true,
+ "chunked_matches_vendor": true,
+ "all_ok": true
+}

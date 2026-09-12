@@ -1,0 +1,58 @@
+### full-shape bench (fresh process per variant)
+### variant: ops
+mlx 0.32.2  Apple M5 Max  k=10 D=2560 VEC=4
+     T  sorted    ops ms     GB/s chain
+     1   False    0.0227        2    10
+     8    True    0.0275       16    10
+   512    True    0.2743      105     8
+  2048    True    1.1562      100     2
+
+### variant: clone
+mlx 0.32.2  Apple M5 Max  k=10 D=2560 VEC=4
+     T  sorted    ops ms   clone ms      x     GB/s chain
+     1   False         -     0.0207      -        3    10
+     8    True         -     0.0225      -       20    10
+   512    True         -     0.0545      -      529     8
+  2048    True         -     0.2355      -      490     2
+
+
+### variant: fast
+mlx 0.32.2  Apple M5 Max  k=10 D=2560 VEC=4
+     T  sorted    ops ms    fast ms      x     GB/s chain
+     1   False         -     0.0227      -        2    10
+     8    True         -     0.0225      -       20    10
+   512    True         -     0.0545      -      529     8
+  2048    True         -     0.2997      -      385     2
+
+
+
+### T sweep, clone only
+### variant: ops
+mlx 0.32.2  Apple M5 Max  k=10 D=2560 VEC=4
+     T  sorted    ops ms     GB/s chain
+     1   False    0.0243        2    10
+     2   False    0.0238        5    10
+     4   False    0.0227       10    10
+     8    True    0.0273       17    10
+    13    True    0.0283       26    10
+    32    True    0.0326       55    10
+    64    True    0.0417       86    10
+   128    True    0.0817       88    10
+   512    True    0.2676      108     8
+  2048    True    1.1098      104     2
+
+### variant: clone
+mlx 0.32.2  Apple M5 Max  k=10 D=2560 VEC=4
+     T  sorted    ops ms   clone ms      x     GB/s chain
+     1   False         -     0.0231      -        2    10
+     2   False         -     0.0206      -        5    10
+     4   False         -     0.0198      -       11    10
+     8    True         -     0.0210      -       21    10
+    13    True         -     0.0209      -       35    10
+    32    True         -     0.0214      -       84    10
+    64    True         -     0.0219      -      165    10
+   128    True         -     0.0236      -      306    10
+   512    True         -     0.0520      -      554     8
+  2048    True         -     0.2268      -      509     2
+
+

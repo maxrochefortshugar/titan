@@ -1,0 +1,104 @@
+{
+ "model": "~/Engineering/MLX/_models/Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+ "tokens": 2048,
+ "backends": {
+  "rows": {
+   "mode": "rows",
+   "gather_bitwise_identical": true,
+   "layer_bitwise_identical": true,
+   "resident_gb": 0.0,
+   "load_seconds": 0.0,
+   "stock_restored": true,
+   "pages_read": 32727,
+   "pread_ms": 415.56929200305603
+  },
+  "resident": {
+   "mode": "resident",
+   "gather_bitwise_identical": true,
+   "layer_bitwise_identical": true,
+   "resident_gb": 32.0001536,
+   "load_seconds": 42.40939116477966,
+   "stock_restored": true
+  }
+ },
+ "norm": {
+  "hc_norm_vs_kernel": {
+   "name": "hc_norm",
+   "elements": 20971520,
+   "bitwise_identical": 20971437,
+   "fraction_identical": 0.9999960422515869,
+   "max_ulp": 1,
+   "mean_ulp": 3.957748504035408e-06,
+   "max_abs": 0.015625,
+   "max_rel": 0.007751937955617905
+  },
+  "hc_norm_wide_dynamic_range": {
+   "name": "hc_norm (wide)",
+   "elements": 20971520,
+   "bitwise_identical": 20971438,
+   "fraction_identical": 0.9999960899353028,
+   "max_ulp": 1,
+   "mean_ulp": 3.910064606316155e-06,
+   "max_abs": 0.015625,
+   "max_rel": 0.007575757801532745
+  },
+  "prefill_forward": {
+   "mixed": {
+    "name": "prefill_forward.mixed",
+    "elements": 5242880,
+    "bitwise_identical": 5240223,
+    "fraction_identical": 0.9994932174682617,
+    "max_ulp": 47744,
+    "mean_ulp": 0.01726512983441353,
+    "max_abs": 0.015625,
+    "max_rel": 9.765625146947912e+26
+   },
+   "hyper_input": {
+    "name": "prefill_forward.hyper_input",
+    "elements": 20971520,
+    "bitwise_identical": 20971520,
+    "fraction_identical": 1.0,
+    "max_ulp": 0,
+    "mean_ulp": 0.0,
+    "max_abs": 0.0,
+    "max_rel": 0.0
+   },
+   "injection": {
+    "name": "prefill_forward.injection",
+    "elements": 8192,
+    "bitwise_identical": 8191,
+    "fraction_identical": 0.9998779296875,
+    "max_ulp": 1,
+    "mean_ulp": 0.0001220703125,
+    "max_abs": 0.0078125,
+    "max_rel": 0.007633587811142206
+   }
+  },
+  "kernel_calls": 1,
+  "fallback_calls": 0
+ },
+ "body": {
+  "hidden": {
+   "name": "body hidden state",
+   "elements": 5242880,
+   "bitwise_identical": 113568,
+   "fraction_identical": 0.021661376953125,
+   "max_ulp": 49017,
+   "mean_ulp": 1048.806884765625,
+   "max_abs": 28.0,
+   "max_rel": 1.1093750096097331e+30
+  },
+  "logits": {
+   "name": "last-position logits",
+   "elements": 248320,
+   "bitwise_identical": 9231,
+   "fraction_identical": 0.03717380798969072,
+   "max_ulp": 34342,
+   "mean_ulp": 468.6949768066406,
+   "max_abs": 0.40625,
+   "max_rel": 409601.0
+  },
+  "argmax_last": true,
+  "argmax_all_fraction": 0.85791015625
+ }
+}

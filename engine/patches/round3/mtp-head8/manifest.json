@@ -1,0 +1,173 @@
+{
+  "tensors": {
+    "mtp.fc_embedding": {
+      "shape": [
+        2560,
+        2560
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        2560,
+        640
+      ],
+      "scales_shape": [
+        2560,
+        40
+      ],
+      "sha256": "6fcc996013b4033e999b5e2955ce168de34c4fdc232ae594f75f4464bb9dd229",
+      "max_abs_err_8bit": 0.0009765625,
+      "rel_fro_err_8bit": 0.0074169443362281555,
+      "max_abs_err_4bit": 0.0289306640625,
+      "rel_fro_err_4bit": 0.10035726943374015
+    },
+    "mtp.fc_hidden": {
+      "shape": [
+        2560,
+        2560
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        2560,
+        640
+      ],
+      "scales_shape": [
+        2560,
+        40
+      ],
+      "sha256": "e474aeebb61689c617461f4de472bac623bed4ede319286f2860130ae175a1cd",
+      "max_abs_err_8bit": 0.003509521484375,
+      "rel_fro_err_8bit": 0.01515017553080945,
+      "max_abs_err_4bit": 0.040283203125,
+      "rel_fro_err_4bit": 0.07320325791464811
+    },
+    "mtp.hyper_connection_mixer.input_mix_weight_down": {
+      "shape": [
+        320,
+        10240
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        320,
+        2560
+      ],
+      "scales_shape": [
+        320,
+        160
+      ],
+      "sha256": "3b1274451f9c26054782401d04761b299cdc801450d1c7b549da16e110ceb635",
+      "max_abs_err_8bit": 0.0107421875,
+      "rel_fro_err_8bit": 0.0089750644828544,
+      "max_abs_err_4bit": 0.390625,
+      "rel_fro_err_4bit": 0.12281227360094085
+    },
+    "mtp.hyper_connection_mixer.input_mix_weight_up": {
+      "shape": [
+        10240,
+        320
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        10240,
+        80
+      ],
+      "scales_shape": [
+        10240,
+        5
+      ],
+      "sha256": "2e6496d40f5a7bbf13c89aaec6bb6c22b57f670296cbb69b2840fff351937f8f",
+      "max_abs_err_8bit": 0.052490234375,
+      "rel_fro_err_8bit": 0.010939752880884219,
+      "max_abs_err_4bit": 8.265625,
+      "rel_fro_err_4bit": 0.43507762346177314
+    },
+    "mtp.layers.0.mlp.switch_mlp.gate_proj": {
+      "shape": [
+        512,
+        640,
+        2560
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        512,
+        640,
+        640
+      ],
+      "scales_shape": [
+        512,
+        640,
+        40
+      ],
+      "sha256": "ca8993c9ca7c03eb7d7db30dd29435a3ff57055618ab9298398e14e2d04ad662",
+      "max_abs_err_8bit": 0.00518798828125,
+      "rel_fro_err_8bit": 0.0074852599422270865,
+      "max_abs_err_4bit": 0.10546875,
+      "rel_fro_err_4bit": 0.10032790084890565
+    },
+    "mtp.layers.0.mlp.switch_mlp.up_proj": {
+      "shape": [
+        512,
+        640,
+        2560
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        512,
+        640,
+        640
+      ],
+      "scales_shape": [
+        512,
+        640,
+        40
+      ],
+      "sha256": "a4c777b1f071787e959b3b6dccce6be2bd800653134d05714d23295c02250430",
+      "max_abs_err_8bit": 0.00506591796875,
+      "rel_fro_err_8bit": 0.007360665659340994,
+      "max_abs_err_4bit": 0.142578125,
+      "rel_fro_err_4bit": 0.0994637168895923
+    },
+    "mtp.layers.0.mlp.switch_mlp.down_proj": {
+      "shape": [
+        512,
+        2560,
+        640
+      ],
+      "bits": 8,
+      "group_size": 64,
+      "mode": "affine",
+      "weight_shape": [
+        512,
+        2560,
+        160
+      ],
+      "scales_shape": [
+        512,
+        2560,
+        10
+      ],
+      "sha256": "50e4b0657fc7b944e7b7f8df6b47b83d038a32d86cd14a4c97955aed923e182e",
+      "max_abs_err_8bit": 0.00439453125,
+      "rel_fro_err_8bit": 0.007300684853596326,
+      "max_abs_err_4bit": 0.36328125,
+      "rel_fro_err_4bit": 0.10621276213830547
+    }
+  },
+  "bits": 8,
+  "group_size": 64,
+  "mode": "affine",
+  "file": "mtp-8bit.safetensors",
+  "file_bytes": 2694760936,
+  "file_sha256": "366ee670274471cca55ce0902137e8503284110d8b33c0e46342f7bb194bcf7f"
+}

@@ -1,0 +1,151 @@
+{
+ "model": "~/Engineering/MLX/_models/Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+ "tokens": 2048,
+ "generated": "2026-09-11T23:47:58",
+ "norm_call_sites": {
+  "stock_vs_kernel": {
+   "name": "stock vs kernel",
+   "elements": 2034237440,
+   "call_sites": 97,
+   "bitwise_identical": 2034228478,
+   "fraction_identical": 0.999995594417926,
+   "fraction_within_1_ulp": 1.0,
+   "max_ulp": 1,
+   "mean_ulp": 4.405582074037532e-06,
+   "max_abs": 0.125,
+   "max_rel": 0.0078125,
+   "worst_call_site_ulp": 1
+  },
+  "fp32_truth_vs_stock": {
+   "name": "fp32 truth vs stock (current)",
+   "elements": 2034237440,
+   "call_sites": 97,
+   "bitwise_identical": 2034234216,
+   "fraction_identical": 0.9999984151309298,
+   "fraction_within_1_ulp": 1.0,
+   "max_ulp": 1,
+   "mean_ulp": 1.5848690701514176e-06,
+   "max_abs": 0.0625,
+   "max_rel": 0.0078125,
+   "worst_call_site_ulp": 1
+  },
+  "fp32_truth_vs_kernel": {
+   "name": "fp32 truth vs kernel (patch)",
+   "elements": 2034237440,
+   "call_sites": 97,
+   "bitwise_identical": 2034226636,
+   "fraction_identical": 0.9999946889189101,
+   "fraction_within_1_ulp": 1.0,
+   "max_ulp": 1,
+   "mean_ulp": 5.311081089924291e-06,
+   "max_abs": 0.125,
+   "max_rel": 0.0078125,
+   "worst_call_site_ulp": 1
+  },
+  "activation_rms_min": 0.004345907364040613,
+  "activation_rms_max": 0.6375350952148438
+ },
+ "prefill_forward": {
+  "mixed": {
+   "name": "prefill_forward.mixed",
+   "elements": 5242880,
+   "call_sites": 1,
+   "bitwise_identical": 5242539,
+   "fraction_identical": 0.9999349594116211,
+   "fraction_within_1_ulp": 0.9999994277954102,
+   "max_ulp": 2,
+   "mean_ulp": 6.561279296875e-05,
+   "max_abs": 0.015625,
+   "max_rel": 0.010526316240429878,
+   "worst_call_site_ulp": 2,
+   "ref_rms": 0.6860848069190979,
+   "rms_error_pct_of_rms": 0.005147256412663752
+  },
+  "hyper_input": {
+   "name": "prefill_forward.hyper_input",
+   "elements": 20971520,
+   "call_sites": 1,
+   "bitwise_identical": 20971520,
+   "fraction_identical": 1.0,
+   "fraction_within_1_ulp": 1.0,
+   "max_ulp": 0,
+   "mean_ulp": 0.0,
+   "max_abs": 0.0,
+   "max_rel": 0.0,
+   "worst_call_site_ulp": 0,
+   "ref_rms": 0.004345907364040613,
+   "rms_error_pct_of_rms": 0.0
+  },
+  "injection": {
+   "name": "prefill_forward.injection",
+   "elements": 8192,
+   "call_sites": 1,
+   "bitwise_identical": 8192,
+   "fraction_identical": 1.0,
+   "fraction_within_1_ulp": 1.0,
+   "max_ulp": 0,
+   "mean_ulp": 0.0,
+   "max_abs": 0.0,
+   "max_rel": 0.0,
+   "worst_call_site_ulp": 0,
+   "ref_rms": 0.07018248736858368,
+   "rms_error_pct_of_rms": 0.0
+  }
+ },
+ "prefill_forward_stats": {
+  "kernel_calls": 1,
+  "fallback_calls": 0
+ },
+ "body": {
+  "prose": {
+   "control_bitwise_identical": true,
+   "control_argmax_identical": true,
+   "hidden": {
+    "name": "body hidden (prose)",
+    "elements": 5242880,
+    "call_sites": 1,
+    "bitwise_identical": 78926,
+    "fraction_identical": 0.015053939819335938,
+    "fraction_within_1_ulp": 0.03968791961669922,
+    "max_ulp": 65842,
+    "mean_ulp": 3104.87578125,
+    "max_abs": 15.0,
+    "max_rel": 2.8906250414379867e+20,
+    "worst_call_site_ulp": 65842
+   },
+   "hidden_rms_error_pct": 12.21957759767423,
+   "max_abs_logit_delta": 6.78125,
+   "peak_logit": 33.5,
+   "argmax_agreement": 0.9345703125,
+   "median_top1_margin": 1.75,
+   "median_margin_where_disagreed": 0.125,
+   "median_margin_where_agreed": 1.875,
+   "disagreements": 134
+  },
+  "code": {
+   "control_bitwise_identical": true,
+   "control_argmax_identical": true,
+   "hidden": {
+    "name": "body hidden (code)",
+    "elements": 5242880,
+    "call_sites": 1,
+    "bitwise_identical": 86072,
+    "fraction_identical": 0.01641693115234375,
+    "fraction_within_1_ulp": 0.04276123046875,
+    "max_ulp": 65930,
+    "mean_ulp": 2971.7359375,
+    "max_abs": 18.640625,
+    "max_rel": 6.531250361789422e+20,
+    "worst_call_site_ulp": 65930
+   },
+   "hidden_rms_error_pct": 12.46091650021428,
+   "max_abs_logit_delta": 8.625,
+   "peak_logit": 45.25,
+   "argmax_agreement": 0.97119140625,
+   "median_top1_margin": 3.875,
+   "median_margin_where_disagreed": 0.125,
+   "median_margin_where_agreed": 4.0,
+   "disagreements": 59
+  }
+ }
+}

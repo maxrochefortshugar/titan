@@ -1,0 +1,4 @@
+=== contended GPU (background 4096^3 bf16 GEMM loop), float32 ===
+  K=512   topk 0.834  argpart 0.804  fused 0.779  vs topk 1.07x  vs argpart 1.03x
+  K=2048  topk 0.801  argpart 0.848  fused 0.722  vs topk 1.11x  vs argpart 1.17x
+  K=4096  topk 0.821  argpart 0.836  fused 0.777  vs topk 1.06x  vs argpart 1.08x

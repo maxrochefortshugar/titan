@@ -1,0 +1,487 @@
+# ruff: noqa: N806
+"""Small-M affine quantized matmul for MLX on Apple silicon (M5 Max).
+
+Problem
+-------
+``mx.quantized_matmul(x[M,K], wq[N,K], transpose=True)`` dispatches to a
+matvec-style kernel for small M.  That kernel is parallelised over rows, so
+every activation row re-reads *and re-dequantizes* the whole weight matrix.
+Cost is therefore almost linear in M exactly where we do not want it to be:
+MTP verify (M=2) and batched decode (M=2..8).  Measured stock on M5 Max:
+lm_head 0.454 ms at M=1 and 3.55 ms at M=8 (7.8x); q_proj 0.027 -> 0.053 (2x).
+
+This module
+-----------
+A ``mx.fast.metal_kernel`` that reads each weight word exactly once, unpacks
+and dequantizes it once, and multiplies it against *all* M activation rows
+held in registers.  Weight traffic becomes independent of M, so the kernel is
+flat from M=1 to M=16 up to the point where the extra FMAs matter (they do
+not: these shapes are bandwidth bound by ~50x).
+
+Morphology (one kernel, two parameters):
+
+- Each simdgroup owns ``BN`` output columns and reduces over a slice of K,
+  lane-strided over packed ``uint32`` weight words (coalesced: consecutive
+  lanes read consecutive words of the same row).
+- ``K_PARTS`` simdgroups split the K reduction and combine through
+  threadgroup memory.  ``K_PARTS > 1`` only exists to manufacture occupancy
+  for small N (kv 512, shared-expert 640); large N uses ``K_PARTS = 1``.
+- ``NSG_N`` column tiles per threadgroup, to amortise threadgroup launch.
+- Accumulators ``acc[BN*M]`` stay in registers (never dynamically indexed --
+  dynamic indexing would spill the array to thread-local memory and destroy
+  the inner loop).  Results are staged through threadgroup memory so the
+  final global stores are coalesced along N.
+
+Accumulation is fp32 throughout; the output is cast to the activation dtype
+on the final store, same as stock qmm.
+
+Supported: affine 4-bit and 8-bit, group_size in {32, 64, 128}, bf16/fp16/fp32
+activations, 1 <= M <= 16, K % 64 == 0, N % 4 == 0, 2-D or batch-1 3-D x.
+Everything else falls back to ``mx.quantized_matmul``.
+
+Enable the ``nn.QuantizedLinear`` routing patch with ``OMLX_SMALLM_QMM=1``.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+_KERNEL_CACHE: dict = {}
+
+# M templates we compile.  Rows are zero-padded up to the next one; padding
+# costs FMAs, not weight traffic, and these shapes are nowhere near compute
+# bound.  Covers the benchmark grid {1,2,3,4,6,8,16} exactly.
+_M_TEMPLATES = (1, 2, 3, 4, 6, 8, 12, 16)
+
+MAX_M = 16
+
+_SUPPORTED_BITS = (4, 8)
+_SUPPORTED_GS = (32, 64, 128)
+
+
+# ---------------------------------------------------------------------------
+# Metal source generation
+# ---------------------------------------------------------------------------
+
+
+def _inner_loop(m: int, bn: int, bits: int) -> str:
+    """Body for one 8-wide K step: load x rows, unpack BN weight words, FMA.
+
+    Two things here matter for speed and both were measured, not guessed:
+
+    * The step is split into two 4-wide *phases* and the activation rows are
+      loaded as ``vec<T,4>`` inside the phase.  Holding m*4 activation values
+      live instead of m*8 is what keeps M=8..16 off the register-spill cliff
+      (m*8 with BN=8 spilled and cost 10-25x).
+    * Unpacking is byte-parallel.  The naive form costs 5 scalar ops per
+      weight value (shift, mask, convert, mul, add) against only M useful
+      FMAs, so at M=8 dequantization is ~40% of the instruction stream.
+      Masking both nibble planes of a uint32 at once and reinterpreting as
+      ``uchar4`` turns 8 values into ~3 integer ops plus two 4-wide converts
+      and two 4-wide FMAs.
+
+    Nibble layout: a packed uint32 holds k values 0..7 in nibbles 0..7 (LSB
+    first).  ``p & 0x0F0F0F0F`` reinterpreted little-endian as uchar4 gives
+    the even k (0,2,4,6); ``(p >> 4) & 0x0F0F0F0F`` gives the odd k (1,3,5,7).
+    Phase 0 handles even k, phase 1 odd.  For 8-bit the two words already are
+    uchar4 and each phase takes one word (k 0..3 then 4..7).
+    """
+    L: list[str] = []
+    L.append("int k_base = step * 8;")
+    L.append("int gi = k_base / GS;")
+    for j in range(bn):
+        L.append(
+            f"float s{j} = float(scales[(n0 + {j}) * K_by_gs + gi]);"
+            f" float b{j} = float(biases[(n0 + {j}) * K_by_gs + gi]);"
+        )
+
+    if bits == 4:
+        for j in range(bn):
+            L.append(f"uint32_t p{j} = w_q[(n0 + {j}) * K_by_w + step];")
+        # phase p covers k = p, p+2, p+4, p+6  ->  x lanes {p, p+2} of v_a/v_b
+        xsel = [(0, 0), (0, 2), (1, 0), (1, 2)]
+    else:
+
+        # phase p covers k = 4p..4p+3  ->  all four lanes of one vec<T,4>
+        xsel = None
+
+    # Activation rows are processed in chunks so that only RCH rows' worth of
+    # float4 activations are live at once.  With all M rows live, BN=4/M=8
+    # needed 32 acc + 32 x + 16 w registers and spilled (M=8 cost 1.6x M=4);
+    # chunking drops the x term to RCH*4.
+    rch = 4 if m > 4 else m
+
+    for ph in range(2):
+        L.append("{")
+        for j in range(bn):
+            if bits == 4:
+                shift = "" if ph == 0 else " >> 4"
+                L.append(
+                    f"    float4 q{j} = float4(as_type<uchar4>("
+                    f"(p{j}{shift}) & 0x0F0F0F0Fu));"
+                    f" float4 w{j} = fma(q{j}, s{j}, b{j});"
+                )
+            else:
+                L.append(
+                    f"    float4 q{j} = float4(as_type<uchar4>("
+                    f"w_q[(n0 + {j}) * K_by_w + step * 2 + {ph}]));"
+                    f" float4 w{j} = fma(q{j}, s{j}, b{j});"
+                )
+        for r0 in range(0, m, rch):
+            rows = range(r0, min(r0 + rch, m))
+            L.append("    {")
+            for r in rows:
+                if bits == 4:
+                    comps = ", ".join(
+                        f"float(x{'a' if w == 0 else 'b'}{r}[{c + ph}])"
+                        for w, c in xsel
+                    )
+                    L.append(
+                        f"        Vec4 xa{r} = xv[({r} * K + k_base) / 4];"
+                        f" Vec4 xb{r} = xv[({r} * K + k_base) / 4 + 1];"
+                        f" float4 xr{r} = float4({comps});"
+                    )
+                else:
+                    L.append(
+                        f"        float4 xr{r} = "
+                        f"float4(xv[({r} * K + k_base) / 4 + {ph}]);"
+                    )
+            for j in range(bn):
+                for r in rows:
+                    L.append(f"        acc[{j} * {m} + {r}] += dot(xr{r}, w{j});")
+            L.append("    }")
+        L.append("}")
+    return "\n            ".join(L)
+
+
+def _build_kernel(m: int, bn: int, bits: int, group_size: int, dtype, k_parts: int, nsg_n: int):
+    import mlx.core as mx
+
+    key = (m, bn, bits, group_size, dtype, k_parts, nsg_n)
+    cached = _KERNEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    n_acc = bn * m
+    # 4-bit: 8 values per uint32.  8-bit: 4 values per uint32, 2 words per step.
+    words_per_row = "K / 8" if bits == 4 else "K / 4"
+
+    stage = "\n            ".join(
+        f"parts[tg_slot + {i}] = acc[{i}];" for i in range(n_acc)
+    )
+
+    source = f"""
+        using namespace metal;
+        constexpr int GS = {group_size};
+        constexpr int BN = {bn};
+        constexpr int MROWS = {m};
+        constexpr int K_PARTS = {k_parts};
+        constexpr int NSG_N = {nsg_n};
+        constexpr int NACC = {n_acc};
+        constexpr int TG_THREADS = 32 * NSG_N * K_PARTS;
+
+        uint sg = simdgroup_index_in_threadgroup;
+        uint lane = thread_index_in_simdgroup;
+        uint tid = thread_position_in_threadgroup.x;
+        uint tg_n = threadgroup_position_in_grid.y;
+
+        int K = int(K_size);
+        int N = int(N_size);
+        int K_by_w = {words_per_row};
+        int K_by_gs = K / GS;
+        int steps = K / 8;                       // 8-wide K steps
+
+        int n_sub = int(sg) / K_PARTS;
+        int part  = int(sg) % K_PARTS;
+        int n0 = (int(tg_n) * NSG_N + n_sub) * BN;
+
+        int per_part = steps / K_PARTS;
+        int s_begin = part * per_part;
+        int s_end = (part == K_PARTS - 1) ? steps : s_begin + per_part;
+
+        threadgroup float parts[NSG_N * K_PARTS * NACC];
+
+        float acc[NACC];
+        _Pragma("unroll")
+        for (int i = 0; i < NACC; ++i) {{ acc[i] = 0.0f; }}
+
+        using Vec4 = vec<T, 4>;
+
+        if (n0 + BN <= N) {{
+            const device Vec4 *xv = (const device Vec4*)x;
+            for (int step = s_begin + int(lane); step < s_end; step += 32) {{
+                {_inner_loop(m, bn, bits)}
+            }}
+        }}
+
+        _Pragma("unroll")
+        for (int i = 0; i < NACC; ++i) {{ acc[i] = simd_sum(acc[i]); }}
+
+        // Stage to threadgroup memory with *static* indices so acc stays in
+        // registers, then write out coalesced along N.
+        int tg_slot = (n_sub * K_PARTS + part) * NACC;
+        if (lane == 0) {{
+            {stage}
+        }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (int idx = int(tid); idx < NSG_N * NACC; idx += TG_THREADS) {{
+            int sub = idx / NACC;
+            int rem = idx - sub * NACC;
+            int row = rem / BN;                  // j fastest -> coalesced stores
+            int j = rem - row * BN;
+            int col = (int(tg_n) * NSG_N + sub) * BN + j;
+            if (col >= N) {{ continue; }}
+            float total = 0.0f;
+            _Pragma("unroll")
+            for (int p = 0; p < K_PARTS; ++p) {{
+                total += parts[(sub * K_PARTS + p) * NACC + j * MROWS + row];
+            }}
+            y[row * N + col] = T(total);
+        }}
+    """
+
+    dtype_tag = {mx.bfloat16: "bf16", mx.float16: "fp16", mx.float32: "fp32"}.get(
+        dtype, "unk"
+    )
+    kernel = mx.fast.metal_kernel(
+        name=(
+            f"smallm_qmm_m{m}_bn{bn}_q{bits}_gs{group_size}"
+            f"_kp{k_parts}_ng{nsg_n}_{dtype_tag}"
+        ),
+        input_names=["x", "w_q", "scales", "biases", "K_size", "N_size"],
+        output_names=["y"],
+        source=source,
+    )
+    _KERNEL_CACHE[key] = kernel
+    return kernel
+
+
+# ---------------------------------------------------------------------------
+# Tile selection
+# ---------------------------------------------------------------------------
+
+# Target simdgroup count: enough independent tiles to fill 40 cores deeply.
+_TARGET_SIMDGROUPS = 1024
+
+
+def _pick_tile(M: int, N: int, K: int, bits: int) -> tuple[int, int, int]:
+    """Return (BN, K_PARTS, NSG_N).  Overridable via OMLX_SMALLM_TILE="bn,kp,ng"."""
+    override = os.environ.get("OMLX_SMALLM_TILE")
+    if override:
+        bn, kp, ng = (int(v) for v in override.split(","))
+        return bn, kp, ng
+
+    # Tile width.  Measured on q_proj/o_proj/kv/shared/lm_head: wide tiles win
+    # at M<=2 (they amortise the activation re-reads across column tiles),
+    # narrow tiles win at M>=8 (BN*M accumulators plus the activation float4s
+    # otherwise spill -- BN=8/M=8 measured 3.5 ms on lm_head against 1.15 ms
+    # for BN=4/M=8).
+    bn = 8 if M <= 2 else (4 if M <= 8 else 2)
+    while bn > 2 and N % bn != 0:
+        bn //= 2
+    if N % bn != 0:
+        bn = 4
+
+    tiles = N // bn
+    steps = K // 8
+    # Split K only to manufacture occupancy for small N (kv 512, shared 640).
+    k_parts = 1
+    while (
+        tiles * k_parts < _TARGET_SIMDGROUPS
+        and k_parts < 8
+        and steps // (k_parts * 2) >= 16
+    ):
+        k_parts *= 2
+
+    # 4-8 simdgroups per threadgroup.
+    nsg_n = 1
+    while nsg_n * k_parts < 8 and tiles % (nsg_n * 2) == 0 and nsg_n < 8:
+        nsg_n *= 2
+    return bn, k_parts, nsg_n
+
+
+def _m_template(M: int) -> int:
+    for t in _M_TEMPLATES:
+        if M <= t:
+            return t
+    raise ValueError(f"M={M} exceeds {MAX_M}")
+
+
+# ---------------------------------------------------------------------------
+# Public wrapper
+# ---------------------------------------------------------------------------
+
+
+def supported(M: int, K: int, N: int, bits: int, group_size: int, dtype) -> bool:
+    import mlx.core as mx
+
+    return (
+        int(bits) in _SUPPORTED_BITS
+        and int(group_size) in _SUPPORTED_GS
+        and dtype in (mx.bfloat16, mx.float16, mx.float32)
+        and 1 <= int(M) <= MAX_M
+        and int(K) % max(64, int(group_size)) == 0
+        and int(K) % 8 == 0
+        and int(N) % 4 == 0
+    )
+
+
+def qmm_smallm(x, wq, scales, biases, group_size: int = 64, bits: int = 4):
+    """x[..., M, K] @ dequant(wq)[N, K]^T -> [..., M, N].
+
+    Falls back to ``mx.quantized_matmul`` for anything unsupported.
+    """
+    import mlx.core as mx
+
+    N = int(scales.shape[0])
+    K = int(x.shape[-1])
+
+    squeeze = False
+    x2 = x
+    if x.ndim == 3:
+        if x.shape[0] != 1:
+            return mx.quantized_matmul(
+                x, wq, scales, biases, transpose=True, group_size=group_size, bits=bits
+            )
+        x2 = x[0]
+        squeeze = True
+    elif x.ndim != 2:
+        return mx.quantized_matmul(
+            x, wq, scales, biases, transpose=True, group_size=group_size, bits=bits
+        )
+
+    M = int(x2.shape[0])
+    if not supported(M, K, N, bits, group_size, x2.dtype):
+        return mx.quantized_matmul(
+            x, wq, scales, biases, transpose=True, group_size=group_size, bits=bits
+        )
+
+    m = _m_template(M)
+    x2 = mx.contiguous(x2)
+    if M < m:
+        x2 = mx.contiguous(
+            mx.concatenate([x2, mx.zeros((m - M, K), dtype=x2.dtype)], axis=0)
+        )
+
+    bn, k_parts, nsg_n = _pick_tile(m, N, K, bits)
+    kernel = _build_kernel(m, bn, bits, group_size, x2.dtype, k_parts, nsg_n)
+
+    cols_per_tg = bn * nsg_n
+    n_tg = (N + cols_per_tg - 1) // cols_per_tg
+    tg_threads = 32 * nsg_n * k_parts
+    (y,) = kernel(
+        inputs=[x2, wq, scales, biases, K, N],
+        template=[("T", x2.dtype)],
+        grid=(tg_threads, n_tg, 1),
+        threadgroup=(tg_threads, 1, 1),
+        output_shapes=[(m, N)],
+        output_dtypes=[x2.dtype],
+    )
+    if M < m:
+        y = y[:M, :]
+    return y[None] if squeeze else y
+
+
+# ---------------------------------------------------------------------------
+# nn.QuantizedLinear routing patch
+# ---------------------------------------------------------------------------
+
+_PATCHED = False
+
+# --- Routing band -----------------------------------------------------------
+# The kernel is correct for 1 <= M <= 16, but it is only *faster* than stock in
+# part of that range, so the patch routes a narrower band than it supports.
+#
+# M = 1: stock's dedicated matvec is already at the bandwidth ceiling and this
+#   kernel has more Python dispatch overhead.  Leaving M=1 alone also keeps
+#   single-stream decode bit-identical to the unpatched engine.
+# M > 8: stock switches to its GEMM path around M=16 and wins decisively --
+#   measured lm_head M=16 stock 1.39 ms against 6.47 ms here, because the
+#   narrow BN=2 tile M>8 needs re-reads the activations once per column tile
+#   (device-traffic amplification 4*M/BN).
+# N floor: below ~16k columns the whole call is 18-25 us and dominated by
+#   launch plus the Python-side dispatch of mx.fast.metal_kernel, which costs
+#   more than the stock C++ fast path saves.  kv_proj (N=512) and the shared
+#   MLP (N=640) sit there and are 0.75-0.9x if routed, so they are not.
+MIN_ROUTE_M = 2
+ROUTE_MAX_M = 8
+MIN_ROUTE_N = int(os.environ.get("OMLX_SMALLM_MIN_N", "16384"))
+
+
+def route_eligible(M: int, K: int, N: int, bits: int, group_size: int, dtype) -> bool:
+    return (
+        MIN_ROUTE_M <= int(M) <= ROUTE_MAX_M
+        and int(N) >= MIN_ROUTE_N
+        and supported(M, K, N, bits, group_size, dtype)
+    )
+
+
+def enabled() -> bool:
+    return os.environ.get("OMLX_SMALLM_QMM", "0") == "1"
+
+
+def apply() -> bool:
+    """Route small-M ``nn.QuantizedLinear`` calls through ``qmm_smallm``.
+
+    Gated by ``OMLX_SMALLM_QMM=1``.  Only 2 <= M <= 16 affine 4/8-bit calls on
+    supported shapes are routed; everything else takes the stock path, and any
+    kernel fault falls back to stock rather than failing the request.
+    """
+    global _PATCHED
+    if _PATCHED:
+        return True
+    if not enabled():
+        logger.debug("smallm qmm patch not enabled (set OMLX_SMALLM_QMM=1)")
+        return False
+
+    import mlx.nn as nn
+
+    cls = nn.QuantizedLinear
+    if getattr(cls, "_omlx_smallm_qmm_patched", False):
+        _PATCHED = True
+        return True
+
+    orig_call = cls.__call__
+
+    def patched_call(self, x):
+        # Batched decode presents [B, T, K] (oMLX: B sequences x T=1). Flatten leading dims so M = B*T.
+        lead = x.shape[:-1]
+        M = 1
+        for d in lead:
+            M *= d
+        if (
+            x.ndim >= 2
+            and getattr(self, "mode", "affine") == "affine"
+            and route_eligible(
+                M, x.shape[-1], self.scales.shape[0], self.bits, self.group_size, x.dtype
+            )
+        ):
+            try:
+                x2 = x.reshape(M, x.shape[-1]) if x.ndim != 2 else x
+                y = qmm_smallm(
+                    x2,
+                    self["weight"],
+                    self["scales"],
+                    self["biases"],
+                    group_size=self.group_size,
+                    bits=self.bits,
+                )
+                if "bias" in self:
+                    y = y + self["bias"]
+                return y.reshape(*lead, y.shape[-1]) if x.ndim != 2 else y
+            except Exception:
+                logger.debug("smallm qmm route failed; stock fallback", exc_info=True)
+        return orig_call(self, x)
+
+    cls.__call__ = patched_call
+    cls._omlx_smallm_qmm_patched = True
+    _PATCHED = True
+    logger.info(
+        "smallm qmm patch applied (M=%d..%d, N>=%d, affine 4/8-bit)",
+        MIN_ROUTE_M, ROUTE_MAX_M, MIN_ROUTE_N,
+    )
+    return True

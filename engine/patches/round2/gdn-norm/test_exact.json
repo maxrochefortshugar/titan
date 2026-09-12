@@ -1,0 +1,126 @@
+{
+  "rows": [
+    {
+      "case": "sigmoid gate, unit normal",
+      "T": 1,
+      "activation": "sigmoid",
+      "elems": 6144,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid gate, unit normal",
+      "T": 2,
+      "activation": "sigmoid",
+      "elems": 12288,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid gate, unit normal",
+      "T": 7,
+      "activation": "sigmoid",
+      "elems": 43008,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid gate, unit normal",
+      "T": 512,
+      "activation": "sigmoid",
+      "elems": 3145728,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid gate, unit normal",
+      "T": 2048,
+      "activation": "sigmoid",
+      "elems": 12582912,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid, small x (eps regime)",
+      "T": 2048,
+      "activation": "sigmoid",
+      "elems": 12582912,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid, large x",
+      "T": 2048,
+      "activation": "sigmoid",
+      "elems": 12582912,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "sigmoid, saturating gate",
+      "T": 2048,
+      "activation": "sigmoid",
+      "elems": 12582912,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "silu gate, unit normal",
+      "T": 2048,
+      "activation": "silu",
+      "elems": 12582912,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    },
+    {
+      "case": "silu, saturating gate",
+      "T": 2048,
+      "activation": "silu",
+      "elems": 12582912,
+      "max_abs": 0.0,
+      "max_rel": 0.0,
+      "ulp_max": 0,
+      "ulp_mean": 0.0,
+      "exact_frac": 1.0,
+      "gt1ulp": 0
+    }
+  ],
+  "zeros_identical": true,
+  "pass": true
+}

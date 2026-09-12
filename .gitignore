@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.log
+*.log.*
+*.safetensors
+*.bin
+*.npz
+wheels/
+mlx-src/
+orig/
+omlx-home/
+kdev/
+.DS_Store

@@ -1,0 +1,191 @@
+{
+ "corpus": {
+  "prose_documents": 5,
+  "code_documents": 434,
+  "prose_tokens": 1717970,
+  "code_tokens": 1679143,
+  "total_tokens": 3397113,
+  "distinct_token_ids": 42335,
+  "vocab_size": 248320
+ },
+ "prefill_tokens": 300000,
+ "chunks": 147,
+ "lookups": 4800000,
+ "lookups_per_token": 16,
+ "distinct_rows_touched": 2096133,
+ "distinct_rows_gb": 0.2096133,
+ "mean_unique_per_2048_chunk": 23528.163265306124,
+ "intra_chunk_dedup_factor": 1.3927138991048504,
+ "top1_row_count": 5081,
+ "share_of_lookups_in_top_1pct_rows": 0.27154645833333335,
+ "hash_seconds_for_stream": 0.018008084000030067,
+ "distinct_bigram_rows": 724211,
+ "distinct_trigram_rows": 1371922,
+ "bigram_lookups": 2400000,
+ "trigram_lookups": 2400000,
+ "bigram_reuse_factor": 3.3139513208167233,
+ "trigram_reuse_factor": 1.7493705910394324,
+ "setassoc_hit_rate_vs_capacity": [
+  {
+   "gb": 0.25,
+   "entries": 2097152,
+   "hit_rate": 0.3919702542039646,
+   "evictions": 213473,
+   "fill": 0.9009757041931152,
+   "set_overflow_rows": 0
+  },
+  {
+   "gb": 0.5,
+   "entries": 4194304,
+   "hit_rate": 0.3939340318738001,
+   "evictions": 1592,
+   "fill": 0.49938488006591797,
+   "set_overflow_rows": 0
+  },
+  {
+   "gb": 1.0,
+   "entries": 8388608,
+   "hit_rate": 0.3939429949344251,
+   "evictions": 4,
+   "fill": 0.24987804889678955,
+   "set_overflow_rows": 0
+  },
+  {
+   "gb": 2.0,
+   "entries": 16777216,
+   "hit_rate": 0.3939429949344251,
+   "evictions": 0,
+   "fill": 0.12493926286697388,
+   "set_overflow_rows": 0
+  },
+  {
+   "gb": 4.0,
+   "entries": 33554432,
+   "hit_rate": 0.3939429949344251,
+   "evictions": 0,
+   "fill": 0.06246963143348694,
+   "set_overflow_rows": 0
+  }
+ ],
+ "exact_lru_reference": [
+  {
+   "gb": 0.25,
+   "capacity_rows": 2485513,
+   "exact_lru_hit_rate": 0.3939429949344251,
+   "seconds": 1.3651426670003275
+  },
+  {
+   "gb": 2.0,
+   "capacity_rows": 19884107,
+   "exact_lru_hit_rate": 0.3939429949344251,
+   "seconds": 1.3173084580002978
+  }
+ ],
+ "associativity_sweep_at_0.25gb": [
+  {
+   "ways": 4,
+   "hit_rate": 0.3847121990146416
+  },
+  {
+   "ways": 8,
+   "hit_rate": 0.3896574954317304
+  },
+  {
+   "ways": 16,
+   "hit_rate": 0.3919702542039646
+  },
+  {
+   "ways": 32,
+   "hit_rate": 0.3930038974857169
+  }
+ ],
+ "static_hot_set": {
+  "train_lookups": 3342336,
+  "eval_lookups": 1457664,
+  "train_distinct_rows": 1543770,
+  "curve": [
+   {
+    "rows_preloaded": 10000,
+    "gb_of_rows": 0.001,
+    "gb_if_capacity_reserved": 0.00108,
+    "static_hit_rate_on_held_out": 0.19011788724973658
+   },
+   {
+    "rows_preloaded": 50000,
+    "gb_of_rows": 0.005,
+    "gb_if_capacity_reserved": 0.0054,
+    "static_hit_rate_on_held_out": 0.2779975357832806
+   },
+   {
+    "rows_preloaded": 100000,
+    "gb_of_rows": 0.01,
+    "gb_if_capacity_reserved": 0.0108,
+    "static_hit_rate_on_held_out": 0.32182382222514927
+   },
+   {
+    "rows_preloaded": 250000,
+    "gb_of_rows": 0.025,
+    "gb_if_capacity_reserved": 0.027,
+    "static_hit_rate_on_held_out": 0.3837365812697576
+   },
+   {
+    "rows_preloaded": 500000,
+    "gb_of_rows": 0.05,
+    "gb_if_capacity_reserved": 0.054,
+    "static_hit_rate_on_held_out": 0.42478650772743237
+   },
+   {
+    "rows_preloaded": 1000000,
+    "gb_of_rows": 0.1,
+    "gb_if_capacity_reserved": 0.108,
+    "static_hit_rate_on_held_out": 0.47037108688970847
+   },
+   {
+    "rows_preloaded": 1543770,
+    "gb_of_rows": 0.154377,
+    "gb_if_capacity_reserved": 0.216,
+    "static_hit_rate_on_held_out": 0.49853807187390237
+   }
+  ],
+  "adaptive_2gb_hit_rate_on_same_eval": 0.4811037335978717,
+  "cross_domain": [
+   {
+    "pair": "prose->code",
+    "train_lookups": 2400000,
+    "hit_rate_top_100000": 0.028316666666666667,
+    "gb_top_100000": 0.01,
+    "hit_rate_top_1000000": 0.041079583333333336,
+    "gb_top_1000000": 0.1
+   },
+   {
+    "pair": "code->prose",
+    "train_lookups": 2400000,
+    "hit_rate_top_100000": 0.036527083333333335,
+    "gb_top_100000": 0.01,
+    "hit_rate_top_1000000": 0.06514166666666667,
+    "gb_top_1000000": 0.073378
+   },
+   {
+    "pair": "prose->prose_heldout",
+    "train_lookups": 1200000,
+    "hit_rate_top_100000": 0.322575,
+    "gb_top_100000": 0.01,
+    "hit_rate_top_1000000": 0.4397325,
+    "gb_top_1000000": 0.0754752
+   },
+   {
+    "pair": "code->code_heldout",
+    "train_lookups": 1200000,
+    "hit_rate_top_100000": 0.37120416666666667,
+    "gb_top_100000": 0.01,
+    "hit_rate_top_1000000": 0.43649333333333334,
+    "gb_top_1000000": 0.0383346
+   }
+  ]
+ },
+ "decode": {
+  "steps": 4096,
+  "lookups_per_step": 16,
+  "hit_rate_after_300k_prefill": 0.64044189453125
+ }
+}

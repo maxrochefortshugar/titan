@@ -1,0 +1,16 @@
+{
+ "off_returns_false": true,
+ "on_returns_true": true,
+ "class_rebound": true,
+ "idempotent": true,
+ "still_one_class": true,
+ "new_table_is_cached_class": true,
+ "existing_table_promoted": true,
+ "budget_gb": 1.811939328,
+ "ways": 16,
+ "reader_default": "pread",
+ "clamped_to_4gb": true,
+ "respects_half_gb": true,
+ "uninstall_restores_class": true,
+ "all_ok": true
+}

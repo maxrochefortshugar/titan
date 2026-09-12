@@ -1,0 +1,20 @@
+
+=== float32, V=248320, median of 41, CHAIN=10 ===
+  mx.argmax          0.038 ms (min 0.031)
+  K=512   topk 0.108/0.103  argpart 0.105/0.100  fused 0.061/0.057  vs topk 1.77x  vs argpart 1.72x
+  K=1024  topk 0.104/0.101  argpart 0.104/0.101  fused 0.057/0.055  vs topk 1.81x  vs argpart 1.82x
+  K=2048  topk 0.104/0.100  argpart 0.105/0.101  fused 0.064/0.060  vs topk 1.64x  vs argpart 1.64x
+  K=4096  topk 0.105/0.102  argpart 0.105/0.102  fused 0.076/0.073  vs topk 1.37x  vs argpart 1.37x
+
+=== bfloat16, V=248320, median of 41, CHAIN=10 ===
+  mx.argmax          0.023 ms (min 0.020)
+  K=512   topk 0.105/0.101  argpart 0.108/0.104  fused 0.079/0.075  vs topk 1.33x  vs argpart 1.36x
+  K=1024  topk 0.113/0.105  argpart 0.110/0.103  fused 0.333/0.064  vs topk 0.34x  vs argpart 0.33x
+  K=2048  topk 0.102/0.100  argpart 0.104/0.101  fused 0.075/0.073  vs topk 1.35x  vs argpart 1.38x
+  K=4096  topk 0.102/0.099  argpart 0.104/0.100  fused 0.078/0.076  vs topk 1.31x  vs argpart 1.34x
+
+=== per-launch, K=2048 float32 ===
+  hist    0.0249 ms (min 0.0229)
+  split   0.0373 ms (min 0.0358)
+  refine  0.0398 ms (min 0.0379)
+  candidates in the boundary bucket: 1533, n_hi=949

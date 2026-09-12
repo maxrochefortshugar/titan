@@ -1,0 +1,212 @@
+{
+ "model": "~/Engineering/MLX/_models/Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+ "cache_bytes_reserved": 442368,
+ "cache_entries": 4096,
+ "evictions_exercised": true,
+ "cache_stats": {
+  "ways": 16,
+  "sets": 256,
+  "entries": 4096,
+  "bytes_reserved": 442368,
+  "gb_reserved": 0.000442368,
+  "live_entries": 4093,
+  "fill": 0.999267578125,
+  "lookups": 18,
+  "rows_requested": 36933,
+  "rows_unique_after_dedup": 19866,
+  "hits": 12556,
+  "misses": 7310,
+  "hit_rate": 0.6320346320346321,
+  "inserts": 6966,
+  "evictions": 2873,
+  "set_overflow_rows": 344,
+  "miss_read_seconds": 0.04429845799859322,
+  "miss_rows_read": 7310,
+  "miss_bytes_read": 731000,
+  "host_path_seconds": 0.0475673730015842,
+  "reader": "pread"
+ },
+ "results": [
+  {
+   "batch": "random_4096",
+   "rows": 4096,
+   "pass": 0,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "random_4096",
+   "rows": 4096,
+   "pass": 1,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "random_4096",
+   "rows": 4096,
+   "pass": 2,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "random_unsorted_2048",
+   "rows": 2048,
+   "pass": 0,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "random_unsorted_2048",
+   "rows": 2048,
+   "pass": 1,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "random_unsorted_2048",
+   "rows": 2048,
+   "pass": 2,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "with_duplicates",
+   "rows": 2048,
+   "pass": 0,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "with_duplicates",
+   "rows": 2048,
+   "pass": 1,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "with_duplicates",
+   "rows": 2048,
+   "pass": 2,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "ngram_realistic_4096",
+   "rows": 4096,
+   "pass": 0,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "ngram_realistic_4096",
+   "rows": 4096,
+   "pass": 1,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "ngram_realistic_4096",
+   "rows": 4096,
+   "pass": 2,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "decode_16",
+   "rows": 16,
+   "pass": 0,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "decode_16",
+   "rows": 16,
+   "pass": 1,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "decode_16",
+   "rows": 16,
+   "pass": 2,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "boundary_rows",
+   "rows": 7,
+   "pass": 0,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "boundary_rows",
+   "rows": 7,
+   "pass": 1,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  },
+  {
+   "batch": "boundary_rows",
+   "rows": 7,
+   "pass": 2,
+   "planes_byte_identical": true,
+   "dequantized_bit_identical": true,
+   "after_weight_scale_bit_identical": true,
+   "max_abs_diff": 0.0,
+   "ulp_diff": 0
+  }
+ ],
+ "all_bit_exact": true
+}

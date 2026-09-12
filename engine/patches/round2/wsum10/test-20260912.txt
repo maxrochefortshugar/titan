@@ -1,0 +1,46 @@
+mlx 0.32.2  Apple M5 Max  k=10 D=2560 bf16
+
+A/B. tail: kernel and stock ops vs each other and vs an fp32 golden
+     T               compare    differ   / total     max abs  maxULP*  <=1ULP%  absd/rms
+     1     stock ops vs fp32      1594      2560   7.812e-03       40   75.820  2.37e-02
+     1  kernel[clone] vs ops         0      2560   0.000e+00        0  100.000  0.00e+00
+     1 kernel[clone] vs fp32      1594      2560   7.812e-03       40   75.820  2.37e-02
+     1    kernel[ops] vs ops      1471      2560   7.812e-03      112   80.156  2.37e-02
+     1   kernel[ops] vs fp32      1079      2560   3.906e-03       27   87.891  1.19e-02
+     1   kernel[fast] vs ops      1594      2560   7.812e-03      129   75.820  2.37e-02
+     1  kernel[fast] vs fp32         0      2560   0.000e+00        0  100.000  0.00e+00
+     8     stock ops vs fp32     12306     20480   1.172e-02      147   78.438  3.24e-02
+     8  kernel[clone] vs ops         0     20480   0.000e+00        0  100.000  0.00e+00
+     8 kernel[clone] vs fp32     12306     20480   1.172e-02      147   78.438  3.24e-02
+     8    kernel[ops] vs ops     11196     20480   1.172e-02       70   82.202  3.24e-02
+     8   kernel[ops] vs fp32      8438     20480   7.812e-03       73   88.330  2.16e-02
+     8   kernel[fast] vs ops     12306     20480   1.172e-02       74   78.438  3.24e-02
+     8  kernel[fast] vs fp32         0     20480   0.000e+00        0  100.000  0.00e+00
+   512     stock ops vs fp32    797113   1310720   2.344e-02      174   78.163  6.39e-02
+   512  kernel[clone] vs ops         0   1310720   0.000e+00        0  100.000  0.00e+00
+   512 kernel[clone] vs fp32    797113   1310720   2.344e-02      174   78.163  6.39e-02
+   512    kernel[ops] vs ops    731058   1310720   2.344e-02      156   82.141  6.39e-02
+   512   kernel[ops] vs fp32    533842   1310720   7.812e-03       80   88.332  2.13e-02
+   512   kernel[fast] vs ops    797113   1310720   2.344e-02      231   78.163  6.39e-02
+   512  kernel[fast] vs fp32         0   1310720   0.000e+00        0  100.000  0.00e+00
+  2048     stock ops vs fp32   3194436   5242880   2.344e-02      148   78.000  6.42e-02
+  2048  kernel[clone] vs ops         0   5242880   0.000e+00        0  100.000  0.00e+00
+  2048 kernel[clone] vs fp32   3194436   5242880   2.344e-02      148   78.000  6.42e-02
+  2048    kernel[ops] vs ops   2931240   5242880   2.344e-02      134   81.991  6.42e-02
+  2048   kernel[ops] vs fp32   2137952   5242880   7.812e-03       95   88.247  2.14e-02
+  2048   kernel[fast] vs ops   3194436   5242880   2.344e-02      152   78.000  6.42e-02
+  2048  kernel[fast] vs fp32         0   5242880   0.000e+00        0  100.000  0.00e+00
+
+* maxULP is taken over elements with |ref| >= max|ref| / 256, and is
+  still dominated by near-cancellation; absd/rms is the honest
+  magnitude column.  The verdict that matters:
+    clone mode  = 0 differing elements vs the stock ops path.
+    fast mode   = 0 differing elements vs the fp32 golden, which the
+                  stock ops path itself misses on ~61% of elements
+                  because MLX reduces bf16 in bf16.
+
+C. end to end: stand-in MoE block, E=32, D=2560, inter=640, top_k=10, T=512
+  patched[clone] vs stock    differ        0/1310720   max abs 0.000e+00  maxULP* 0  <=1ULP 100.000%
+  patched[ops] vs stock      differ   737412/1310720   max abs 3.662e-04  maxULP* 141  <=1ULP 80.682%
+  patched[fast] vs stock     differ   809262/1310720   max abs 3.662e-04  maxULP* 170  <=1ULP 76.798%
+

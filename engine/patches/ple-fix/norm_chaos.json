@@ -1,0 +1,238 @@
+{
+ "model": "~/Engineering/MLX/_models/Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+ "tokens": 2048,
+ "generated": "2026-09-11T23:52:27",
+ "variants": {
+  "prose": {
+   "kernel": {
+    "hidden_rms_error_pct": 12.21957759767423,
+    "hidden_ulp": {
+     "name": "kernel vs stock",
+     "elements": 5242880,
+     "call_sites": 1,
+     "bitwise_identical": 78926,
+     "fraction_identical": 0.015053939819335938,
+     "fraction_within_1_ulp": 0.03968791961669922,
+     "max_ulp": 65842,
+     "mean_ulp": 3104.87578125,
+     "max_abs": 15.0,
+     "max_rel": 2.8906250414379867e+20,
+     "worst_call_site_ulp": 65842
+    },
+    "argmax_agreement": 0.9345703125,
+    "disagreements": 134,
+    "median_margin_where_disagreed": 0.125,
+    "median_margin_where_agreed": 1.875,
+    "divergence_by_call_site": [
+     0.0,
+     0.9309385193887476,
+     1.794531047630889,
+     2.2835206473206022,
+     3.6106129380564744,
+     5.1833690205169045,
+     5.4616167539307146,
+     7.392598132052541,
+     12.744298687392186,
+     16.36316970455935,
+     17.81746915345214,
+     16.52865779821439,
+     12.645226318765483
+    ]
+   },
+   "exact": {
+    "hidden_rms_error_pct": 12.276559029817786,
+    "hidden_ulp": {
+     "name": "exact vs stock",
+     "elements": 5242880,
+     "call_sites": 1,
+     "bitwise_identical": 79782,
+     "fraction_identical": 0.015217208862304687,
+     "fraction_within_1_ulp": 0.03999671936035156,
+     "max_ulp": 66030,
+     "mean_ulp": 3115.1919921875,
+     "max_abs": 26.39453125,
+     "max_rel": 3.7812500427942186e+20,
+     "worst_call_site_ulp": 66030
+    },
+    "argmax_agreement": 0.93505859375,
+    "disagreements": 133,
+    "median_margin_where_disagreed": 0.125,
+    "median_margin_where_agreed": 1.875,
+    "divergence_by_call_site": [
+     0.0,
+     0.8630385060019232,
+     1.689937495466932,
+     2.216764940570362,
+     3.568920970265708,
+     5.162290837130838,
+     5.496522373179683,
+     7.580272066825751,
+     13.245092113924821,
+     16.984095183031258,
+     18.025443499515447,
+     16.730368109984916,
+     12.91464084358508
+    ]
+   },
+   "dither": {
+    "hidden_rms_error_pct": 12.461667003738063,
+    "hidden_ulp": {
+     "name": "dither vs stock",
+     "elements": 5242880,
+     "call_sites": 1,
+     "bitwise_identical": 77964,
+     "fraction_identical": 0.014870452880859374,
+     "fraction_within_1_ulp": 0.03902130126953125,
+     "max_ulp": 66010,
+     "mean_ulp": 3177.225,
+     "max_abs": 26.14453125,
+     "max_rel": 3.4687501904630723e+20,
+     "worst_call_site_ulp": 66010
+    },
+    "argmax_agreement": 0.9326171875,
+    "disagreements": 138,
+    "median_margin_where_disagreed": 0.125,
+    "median_margin_where_agreed": 1.875,
+    "divergence_by_call_site": [
+     0.0,
+     0.8649628466517175,
+     1.7702564680405748,
+     2.2685799892771557,
+     3.632868720416807,
+     5.272910745683124,
+     5.617625493270632,
+     7.786075670488918,
+     13.581245206784477,
+     17.32137118667429,
+     18.828638770878193,
+     17.3745978133633,
+     13.311888606874454
+    ]
+   },
+   "kernel_vs_exact": {
+    "hidden_rms_error_pct": 12.475847919832798,
+    "argmax_agreement": 0.939453125
+   },
+   "stock_vs_exact": {
+    "hidden_rms_error_pct": 12.261392628070839,
+    "argmax_agreement": 0.93505859375
+   }
+  },
+  "code": {
+   "kernel": {
+    "hidden_rms_error_pct": 12.46091650021428,
+    "hidden_ulp": {
+     "name": "kernel vs stock",
+     "elements": 5242880,
+     "call_sites": 1,
+     "bitwise_identical": 86072,
+     "fraction_identical": 0.01641693115234375,
+     "fraction_within_1_ulp": 0.04276123046875,
+     "max_ulp": 65930,
+     "mean_ulp": 2971.7359375,
+     "max_abs": 18.640625,
+     "max_rel": 6.531250361789422e+20,
+     "worst_call_site_ulp": 65930
+    },
+    "argmax_agreement": 0.97119140625,
+    "disagreements": 59,
+    "median_margin_where_disagreed": 0.125,
+    "median_margin_where_agreed": 4.0,
+    "divergence_by_call_site": [
+     0.0,
+     0.8176659289800007,
+     1.5059343226435347,
+     1.8383565030227826,
+     2.7884962997251477,
+     4.054850049940977,
+     4.360441724403725,
+     5.9603791318980175,
+     11.59640052746246,
+     16.747559321014208,
+     18.844543599783602,
+     17.479057306772212,
+     13.266270902235823
+    ]
+   },
+   "exact": {
+    "hidden_rms_error_pct": 12.369569916816713,
+    "hidden_ulp": {
+     "name": "exact vs stock",
+     "elements": 5242880,
+     "call_sites": 1,
+     "bitwise_identical": 90884,
+     "fraction_identical": 0.017334747314453124,
+     "fraction_within_1_ulp": 0.04328784942626953,
+     "max_ulp": 65840,
+     "mean_ulp": 2984.3203125,
+     "max_abs": 14.5,
+     "max_rel": 2.8125000783552e+20,
+     "worst_call_site_ulp": 65840
+    },
+    "argmax_agreement": 0.9609375,
+    "disagreements": 80,
+    "median_margin_where_disagreed": 0.125,
+    "median_margin_where_agreed": 4.125,
+    "divergence_by_call_site": [
+     0.0,
+     0.8679390807044237,
+     1.6134515276903008,
+     1.969172280143611,
+     2.9422161461727097,
+     4.241401444823782,
+     4.4829347961256385,
+     5.941409853468815,
+     11.070617793345368,
+     15.974672570744785,
+     17.667799216293428,
+     16.776995512525097,
+     12.86441856709722
+    ]
+   },
+   "dither": {
+    "hidden_rms_error_pct": 12.718099633678555,
+    "hidden_ulp": {
+     "name": "dither vs stock",
+     "elements": 5242880,
+     "call_sites": 1,
+     "bitwise_identical": 81879,
+     "fraction_identical": 0.015617179870605468,
+     "fraction_within_1_ulp": 0.040704345703125,
+     "max_ulp": 65858,
+     "mean_ulp": 3071.7400390625,
+     "max_abs": 17.0,
+     "max_rel": 2.750000143073343e+20,
+     "worst_call_site_ulp": 65858
+    },
+    "argmax_agreement": 0.96533203125,
+    "disagreements": 71,
+    "median_margin_where_disagreed": 0.125,
+    "median_margin_where_agreed": 4.125,
+    "divergence_by_call_site": [
+     0.0,
+     0.8140297479937387,
+     1.5421582562861988,
+     1.9261739244682956,
+     2.9271078559691124,
+     4.198469012142168,
+     4.432383013392925,
+     5.988897100385665,
+     11.694922386291376,
+     16.799950870832106,
+     18.78664812819986,
+     17.548437857910677,
+     13.499624401415351
+    ]
+   },
+   "kernel_vs_exact": {
+    "hidden_rms_error_pct": 12.512762877431115,
+    "argmax_agreement": 0.97265625
+   },
+   "stock_vs_exact": {
+    "hidden_rms_error_pct": 12.36473336731217,
+    "argmax_agreement": 0.9609375
+   }
+  }
+ },
+ "dither_rate": 4.4e-06
+}

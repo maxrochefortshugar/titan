@@ -1,0 +1,109 @@
+=== test_topk.py ===
+real V=248320 mlx.core.float32     k=512   values=ok idx->val=ok distinct=ok set_eq=True kth=+16.997 ties_at_kth=1 PASS
+real V=248320 mlx.core.float32     k=1024  values=ok idx->val=ok distinct=ok set_eq=True kth=+15.7346 ties_at_kth=1 PASS
+real V=248320 mlx.core.float32     k=2048  values=ok idx->val=ok distinct=ok set_eq=True kth=+14.3395 ties_at_kth=1 PASS
+real V=248320 mlx.core.float32     k=4096  values=ok idx->val=ok distinct=ok set_eq=True kth=+12.7732 ties_at_kth=1 PASS
+real V=248320 mlx.core.bfloat16    k=512   values=ok idx->val=ok distinct=ok set_eq=False kth=+17.125 ties_at_kth=38 PASS
+real V=248320 mlx.core.bfloat16    k=1024  values=ok idx->val=ok distinct=ok set_eq=False kth=+15.8125 ties_at_kth=34 PASS
+real V=248320 mlx.core.bfloat16    k=2048  values=ok idx->val=ok distinct=ok set_eq=False kth=+14.375 ties_at_kth=56 PASS
+real V=248320 mlx.core.bfloat16    k=4096  values=ok idx->val=ok distinct=ok set_eq=False kth=+12.8125 ties_at_kth=115 PASS
+logit-like bf16 (tie heavy)        k=512   values=ok idx->val=ok distinct=ok set_eq=False kth=+4 ties_at_kth=4939 PASS
+logit-like bf16 (tie heavy)        k=2048  values=ok idx->val=ok distinct=ok set_eq=False kth=+4 ties_at_kth=4939 PASS
+logit-like bf16 (tie heavy)        k=4096  values=ok idx->val=ok distinct=ok set_eq=False kth=+4 ties_at_kth=4939 PASS
+all zeros                          k=2048  values=ok idx->val=ok distinct=ok set_eq=False kth=+0 ties_at_kth=248320 PASS
+all equal bf16                     k=1024  values=ok idx->val=ok distinct=ok set_eq=False kth=-3 ties_at_kth=248320 PASS
+monotone ascending                 k=2048  values=ok idx->val=ok distinct=ok set_eq=True kth=+246272 ties_at_kth=1 PASS
+monotone descending                k=2048  values=ok idx->val=ok distinct=ok set_eq=True kth=-2047 ties_at_kth=1 PASS
+mixed sign, k not a power of two   k=3000  values=ok idx->val=ok distinct=ok set_eq=True kth=+13.5272 ties_at_kth=1 PASS
+V=4096                             k=512   values=ok idx->val=ok distinct=ok set_eq=True kth=+1.10436 ties_at_kth=1 PASS
+k == V                             k=5000  values=ok idx->val=ok distinct=ok set_eq=True kth=-3.81261 ties_at_kth=1 PASS
+shape [1, V]                       k=2048  values=ok idx->val=ok distinct=ok set_eq=True kth=+2.40538 ties_at_kth=1 PASS
+repeat determinism                 PASS
+
+ALL PASS
+
+=== test_wsum_verify.py ===
+clone mode: bit-identity with the stock ops tail is the bar
+
+mode=clone  B=1 T=2   k=10 D=2560  mlx.core.bfloat16 elems=5120     differ=0        vs_ops=0.000e+00 err_kernel=6.500e-03 err_ops=6.500e-03 PASS
+mode=clone  B=1 T=3   k=10 D=2560  mlx.core.bfloat16 elems=7680     differ=0        vs_ops=0.000e+00 err_kernel=8.576e-03 err_ops=8.576e-03 PASS
+mode=clone  B=1 T=4   k=10 D=2560  mlx.core.bfloat16 elems=10240    differ=0        vs_ops=0.000e+00 err_kernel=1.010e-02 err_ops=1.010e-02 PASS
+mode=clone  B=1 T=5   k=10 D=2560  mlx.core.bfloat16 elems=12800    differ=0        vs_ops=0.000e+00 err_kernel=7.905e-03 err_ops=7.905e-03 PASS
+mode=clone  B=1 T=6   k=10 D=2560  mlx.core.bfloat16 elems=15360    differ=0        vs_ops=0.000e+00 err_kernel=8.017e-03 err_ops=8.017e-03 PASS
+mode=clone  B=1 T=8   k=10 D=2560  mlx.core.bfloat16 elems=20480    differ=0        vs_ops=0.000e+00 err_kernel=1.002e-02 err_ops=1.002e-02 PASS
+mode=clone  B=1 T=10  k=10 D=2560  mlx.core.bfloat16 elems=25600    differ=0        vs_ops=0.000e+00 err_kernel=8.843e-03 err_ops=8.843e-03 PASS
+mode=clone  B=1 T=13  k=10 D=2560  mlx.core.bfloat16 elems=33280    differ=0        vs_ops=0.000e+00 err_kernel=9.026e-03 err_ops=9.026e-03 PASS
+mode=clone  B=1 T=15  k=10 D=2560  mlx.core.bfloat16 elems=38400    differ=0        vs_ops=0.000e+00 err_kernel=8.950e-03 err_ops=8.950e-03 PASS
+mode=clone  B=1 T=4   k=10 D=2560  mlx.core.float16 elems=10240    differ=0        vs_ops=0.000e+00 err_kernel=9.800e-04 err_ops=9.800e-04 PASS
+mode=clone  B=2 T=4   k=10 D=2560  mlx.core.bfloat16 elems=20480    differ=0        vs_ops=0.000e+00 err_kernel=1.199e-02 err_ops=1.199e-02 PASS
+mode=clone  B=1 T=4   k=8 D=2560  mlx.core.bfloat16 elems=10240    differ=0        vs_ops=0.000e+00 err_kernel=6.674e-03 err_ops=6.674e-03 PASS
+
+fp32 modes (the ops path is the looser side here)
+mode=ops    B=1 T=4   k=10 D=2560  mlx.core.bfloat16 elems=10240    differ=5819     vs_ops=7.812e-03 err_kernel=3.175e-03 err_ops=8.742e-03 PASS
+mode=ops    B=1 T=13  k=10 D=2560  mlx.core.bfloat16 elems=33280    differ=18362    vs_ops=7.812e-03 err_kernel=3.460e-03 err_ops=9.790e-03 PASS
+mode=fast   B=1 T=4   k=10 D=2560  mlx.core.bfloat16 elems=10240    differ=6346     vs_ops=7.812e-03 err_kernel=1.946e-03 err_ops=7.828e-03 PASS
+mode=fast   B=1 T=13  k=10 D=2560  mlx.core.bfloat16 elems=33280    differ=20402    vs_ops=1.172e-02 err_kernel=3.619e-03 err_ops=1.059e-02 PASS
+
+against an fp32 golden
+stock ops vs fp32 golden : max_abs 8.457e-03
+kernel fast vs fp32 golden: max_abs 3.331e-03
+
+install gate
+self_check: True
+
+ALL PASS
+
+=== test_hooks.py ===
+MTP verify weighted-sum: No module named 'mlx_vlm'
+int8 down projections skipped: 0.0 GB active + 0.00 GB of tables crosses the 0.0 GB soft limit
+item 1: MTP shortlist fused top-K
+  flag off                     -> install False   ok
+  flag on                      -> install True
+  second call (idempotent)     -> install True    ok
+  float32   k=512   ids equal=True values equal=True gathered rows ok=True PASS
+  float32   k=2048  ids equal=True values equal=True gathered rows ok=True PASS
+  float32   k=4096  ids equal=True values equal=True gathered rows ok=True PASS
+  bfloat16  k=512   ids equal=False values equal=True gathered rows ok=True PASS
+  bfloat16  k=2048  ids equal=False values equal=True gathered rows ok=True PASS
+  bfloat16  k=4096  ids equal=False values equal=True gathered rows ok=True PASS
+  proxy stats: {'installed': True, 'calls': 6, 'fallbacks': 0}
+
+item 2: PLE reader worker count
+  unset                        -> stock pool kept (48)   ok
+  OMLX_PLE_READ_WORKERS=16     -> swapped=True max_workers=16
+  uninstall                    -> stock pool restored    ok
+
+item 3: MTP verify weighted sum
+  flag off                     -> install False   ok
+  flag on, mlx_vlm absent      -> install False (stock path kept)
+  kernel self-check            -> True
+
+item 4: int8 down-projection tables
+  down tables for 4 experts x1 down tensor: 0.6 MB (expected 0.6 MB) ok
+  soft-limit guard             -> refused=True, OMLX_MOE_INT8_SKIP_DOWN untouched=True
+
+ALL PASS
+
+=== memcalc.py ===
+Per-tensor int8 tables, measured through moe-int8/kernel.py:prepare_weights
+
+tensor                  N      K    G                       tables  MB/tensor   GB x48
+gate_up (fused)      1280   2560   40 bfloat16[40, 1280], bfloat16[40, 1280], uint16[40, 1280]      157.3    7.550
+down                 2560    640   10 bfloat16[10, 2560], bfloat16[10, 2560], uint16[10, 2560]       78.6    3.775
+
+gate_up only (deployed today): 7.55 GB
+down projections add:          3.77 GB (3.52 GiB)
+both:                          11.32 GB
+
+Budget, memory guard 110 GB (soft 93.5, hard 104.5)
+  in use today (model + gate_up tables + 4 GB hot cache)   85.70 ->   85.70 GB
+  + down tables                                             3.77 ->   89.47 GB
+  + 65k KV cache                                            1.62 ->   91.10 GB
+  soft limit                                               93.50 GB   headroom +2.40 GB
+  hard limit                                              104.50 GB   headroom +13.40 GB
+  2 concurrent 65k streams: 92.72 GB, soft headroom +0.78 GB
+  4 concurrent 65k streams: 95.97 GB, soft headroom -2.47 GB
+
+warmup() skip condition, moe-int8/patch.py:191
+  gate_up (fused)    weight.shape[-1]= 320  coded 'shape[-1]*8//bits'=  640 (<=1024: True)  actual K=2560
+  down               weight.shape[-1]=  80  coded 'shape[-1]*8//bits'=  160 (<=1024: True)  actual K=640
