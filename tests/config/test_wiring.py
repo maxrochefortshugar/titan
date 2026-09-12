@@ -1,0 +1,213 @@
+"""The composition root, built against fakes.
+
+Two things are worth asserting here and neither is about an adapter. The graph
+builds in dependency order from a config alone, and a component that does not
+exist yet fails with its module named rather than with an ``ImportError`` from
+somewhere three layers down. The second is what lets W1.7 land before the store,
+the tokenizer and the scheduler do.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from titan.config import settings, wiring
+from titan.config.schema import TitanConfig
+from titan.core.errors import ConfigError
+
+from .conftest import FULL, MINIMAL
+
+
+def test_the_wiring_module_imports_nothing_heavy():
+    """Importing the composition root must not pull MLX into the process.
+
+    ``titan check-config`` runs on a laptop against a config for a machine that
+    is not this one, and it goes through this module.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(wiring))
+    top_level = [
+        n
+        for n in tree.body
+        if isinstance(n, (ast.Import, ast.ImportFrom))
+    ]
+    imported = set()
+    for node in top_level:
+        if isinstance(node, ast.Import):
+            imported.update(a.name for a in node.names)
+        elif node.module:
+            imported.add(node.module)
+    for name in imported:
+        assert not name.startswith("titan.adapters"), name
+        assert not name.startswith("titan.engine"), name
+        assert not name.startswith("titan.api"), name
+        assert not name.startswith("titan.kernels"), name
+        assert not name.startswith("mlx"), name
+
+
+def test_build_runtime_with_fakes(fake_parts):
+    config = TitanConfig.from_toml(MINIMAL)
+    runtime = wiring.build_runtime(config, fake_parts)
+    assert runtime.config is config
+    assert runtime.backend is fake_parts.backend
+    assert runtime.engine is fake_parts.engine
+    assert runtime.scheduler is fake_parts.engine
+    assert runtime.app is fake_parts.app
+
+
+def test_start_warms_the_backend_once_and_starts_the_engine(fake_parts):
+    runtime = wiring.build_runtime(TitanConfig.from_toml(MINIMAL), fake_parts)
+    runtime.start()
+    runtime.start()
+    assert fake_parts.backend.warmed == 1
+    assert fake_parts.engine.started == 1
+
+
+def test_stop_drains_the_engine_then_the_store(fake_parts):
+    runtime = wiring.build_runtime(TitanConfig.from_toml(MINIMAL), fake_parts)
+    runtime.start()
+    runtime.stop(5.0)
+    assert fake_parts.engine.stopped == [5.0]
+    assert fake_parts.store.flushed == [5.0]
+
+
+def test_build_runtime_validates_first(fake_parts):
+    """A config that was built without ``from_toml`` is still validated."""
+    from titan.config import schema
+
+    bad = TitanConfig(
+        model=schema.ModelConfig(path="/m"),
+        server=schema.ServerConfig(port=8083),
+    )
+    with pytest.raises(ConfigError, match="is reserved"):
+        wiring.build_runtime(bad, fake_parts)
+
+
+def test_a_missing_component_names_the_module_that_owes_it(fake_parts):
+    """The state codec is still owed, so building without one says by whom."""
+    from titan.config.wiring import Parts
+
+    parts = Parts(**{**vars(fake_parts), "codec": None})
+    with pytest.raises(NotImplementedError, match="titan.adapters.mlx.state"):
+        wiring.build_runtime(TitanConfig.from_toml(MINIMAL), parts)
+
+
+def test_a_backend_without_a_layer_layout_is_named(fake_parts):
+    with pytest.raises(NotImplementedError, match="titan.adapters.mlx.backend"):
+        wiring.build_signature(TitanConfig.from_toml(MINIMAL), fake_parts.backend)
+
+
+def test_the_store_is_built_from_the_cache_section(tmp_path):
+    config = TitanConfig.from_toml(
+        MINIMAL + f'\n[cache]\nram_tier_mb = 8.0\nssd_dir = "{tmp_path}"\n'
+    )
+
+    class Backend:
+        layer_layout = ("gdn", "qsa")
+
+    signature = wiring.build_signature(config, Backend())
+    assert signature.block_tokens == 512
+    store = wiring.build_store(config, signature)
+    assert store.get_block(b"\x00" * 32) is None
+    assert store.flush(1.0)
+
+
+def test_the_admission_config_carries_the_soft_guard():
+    config = TitanConfig.from_toml(MINIMAL)
+    admission = wiring.build_admission_config(config)
+    assert admission.max_sequences == 8
+    assert admission.block_tokens == 512
+    assert admission.memory_guard_gb == pytest.approx(110.0 * 0.85)
+
+
+def test_the_decode_cycle_follows_the_speculation_switch():
+    from titan.engine.decode_cycle import MTPDecodeCycle, PlainDecodeCycle
+
+    on = TitanConfig.from_toml(MINIMAL)
+    off = TitanConfig.from_toml(MINIMAL + "\n[speculation]\nenabled = false\n")
+    args = dict(backend=object(), tokenizer=object(), profiler=None)
+    assert isinstance(wiring.build_cycle(on, **args), MTPDecodeCycle)
+    assert isinstance(wiring.build_cycle(off, **args), PlainDecodeCycle)
+
+
+def test_the_profiler_stub_names_its_module():
+    with pytest.raises(NotImplementedError, match="titan.observability.profiler"):
+        wiring.build_profiler(TitanConfig.from_toml(MINIMAL))
+
+
+def test_the_kernel_registry_is_real_and_honours_the_config():
+    config = TitanConfig.from_toml(MINIMAL + '\n[kernels]\ndisabled = ["topk_radix"]\n')
+    registry = wiring.build_registry(config)
+    assert "topk_radix" in registry.names()
+    assert registry.config.disabled == ("topk_radix",)
+
+
+def test_reference_only_turns_every_fast_path_off():
+    config = TitanConfig.from_toml(MINIMAL + "\n[kernels]\nreference_only = true\n")
+    registry = wiring.build_registry(config)
+    assert set(registry.config.disabled) == set(registry.names())
+    assert registry.config.fail_open is False
+
+
+def test_a_stale_bisect_name_is_a_config_error():
+    config = TitanConfig.from_toml(MINIMAL + '\n[kernels]\ndisabled = ["nosuchop"]\n')
+    with pytest.raises(ConfigError, match="nosuchop"):
+        wiring.build_registry(config)
+
+
+def test_build_app_uses_the_api_projection_of_the_config(fake_parts):
+    config = TitanConfig.from_toml(FULL)
+    app = wiring.build_app(
+        config,
+        engine=fake_parts.engine,
+        tokenizer=fake_parts.tokenizer,
+        template=fake_parts.template,
+    )
+    deps = app.state.deps
+    assert deps.config.server.port == 8085
+    assert deps.config.model.served_names() == [
+        "Qwen3.8-Flash-Next-oQ4e-mtp",
+        "Qwen3.8-Flash-Next-oQ4e-mtp:no-think",
+    ]
+    assert deps.config.model.resolve(
+        "Qwen3.8-Flash-Next-oQ4e-mtp:no-think"
+    ).sampling.temperature == 0.0
+
+
+def test_load_config_reads_a_file_and_records_its_source(write_config):
+    path = write_config(MINIMAL)
+    config = wiring.load_config(str(path))
+    assert config.source == str(path)
+    assert config.model.path == "/models/qwen"
+
+
+def test_load_config_applies_overrides(write_config):
+    path = write_config(MINIMAL)
+    config = wiring.load_config(str(path), ("scheduler.max_seqs=3",))
+    assert config.scheduler.max_seqs == 3
+
+
+def test_load_config_falls_back_to_the_one_environment_variable(
+    write_config, monkeypatch
+):
+    path = write_config(MINIMAL)
+    monkeypatch.setenv(settings.TITAN_CONFIG_ENV, str(path))
+    assert wiring.load_config().model.path == "/models/qwen"
+
+
+def test_load_config_without_a_path_or_variable_refuses(monkeypatch):
+    monkeypatch.delenv(settings.TITAN_CONFIG_ENV, raising=False)
+    with pytest.raises(ValueError, match=settings.TITAN_CONFIG_ENV):
+        wiring.load_config()
+
+
+def test_a_missing_file_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="cannot read config"):
+        wiring.load_config(str(tmp_path / "nope.toml"))
+
+
+def test_the_resolved_config_view_is_redacted():
+    view = wiring.resolved_config_view(TitanConfig.from_toml(FULL))
+    assert view["server"]["api_key_file"] == "***redacted***"

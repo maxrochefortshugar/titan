@@ -1,4 +1,24 @@
-"""Validated configuration for the Titan server.
+"""The pydantic front end over :mod:`titan.config.schema`.
+
+``titan.config.schema`` holds the one definition of what a Titan configuration
+is: frozen dataclasses, stdlib only, and the type the engine and the wiring
+consume. This module is the view the HTTP surface reads. It covers the three
+sections the API actually touches, server, model with its aliases, and limits,
+and it exists for two reasons that are worth stating rather than assuming.
+
+First, the API layer wants request-shaped behaviour from its config: resolve an
+alias, merge sampling field by field, read the bearer key off disk on demand.
+Those are methods on a config object, not on a parse tree.
+
+Second, pydantic gives the HTTP surface the same validation vocabulary it uses
+for request bodies, so a bad config and a bad request fail the same way in the
+same tests.
+
+Every default here is taken from :mod:`titan.config.schema` rather than typed
+again, and ``tests/config/test_parity.py`` compares the two field sets so a
+section added on one side and forgotten on the other fails the build.
+:meth:`TitanConfig.from_schema` is how the wiring produces this view from the
+canonical config, and :meth:`TitanConfig.to_schema` goes the other way.
 
 One rule holds everywhere in this module: **nothing here reads the environment**
 except the single optional ``TITAN_CONFIG`` path in :func:`load_config`. Sampling
@@ -14,13 +34,26 @@ That keeps the secret out of anything that gets pasted into an issue.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import tomllib
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from titan.config import schema
+from titan.config.schema import (
+    CacheConfig,
+    DtypePolicy,
+    KernelConfig,
+    ObservabilityConfig,
+    SchedulerConfig,
+    SpeculationConfig,
+)
+from titan.config.schema import TitanConfig as CoreConfig
+from titan.core.errors import ConfigError
 
 __all__ = [
     "ServerConfig",
@@ -29,23 +62,33 @@ __all__ = [
     "ModelConfig",
     "LimitsConfig",
     "TitanConfig",
+    "CoreConfig",
+    "CacheConfig",
+    "DtypePolicy",
+    "KernelConfig",
+    "ObservabilityConfig",
+    "SchedulerConfig",
+    "SpeculationConfig",
     "load_config",
+    "load_core",
+    "resolve_config_path",
     "TITAN_CONFIG_ENV",
 ]
 
 TITAN_CONFIG_ENV = "TITAN_CONFIG"
 """The only environment variable Titan reads, anywhere. Holds a config path."""
 
-# Production sampling defaults for Qwen3.8-Flash-Next. These are the numbers the
-# model card specifies for thinking mode; deviating from them (temperature 1.0 in
-# particular) produces the repetition and tool-argument corruption that made the
-# first week of agent runs unusable.
-_DEFAULT_TEMPERATURE = 0.7
-_DEFAULT_TOP_P = 0.8
-_DEFAULT_TOP_K = 20
-_DEFAULT_REASONING_EFFORT = "medium"
+# Production sampling defaults for Qwen3.8-Flash-Next, defined once in the
+# schema module. These are the numbers the model card specifies for thinking
+# mode; deviating from them (temperature 1.0 in particular) produces the
+# repetition and tool-argument corruption that made the first week of agent runs
+# unusable.
+_DEFAULT_TEMPERATURE = schema.DEFAULT_TEMPERATURE
+_DEFAULT_TOP_P = schema.DEFAULT_TOP_P
+_DEFAULT_TOP_K = schema.DEFAULT_TOP_K
+_DEFAULT_REASONING_EFFORT = schema.DEFAULT_REASONING_EFFORT
 
-_REASONING_EFFORTS = ("low", "medium", "xhigh")
+_REASONING_EFFORTS = schema.REASONING_EFFORTS
 
 
 class _Strict(BaseModel):
@@ -58,7 +101,7 @@ class ServerConfig(_Strict):
     """Where the HTTP surface binds and how it authenticates."""
 
     host: str = "127.0.0.1"
-    port: int = Field(default=8083, ge=1, le=65535)
+    port: int = Field(default=schema.DEFAULT_PORT, ge=1, le=65535)
     api_key_file: Path | None = None
     """File holding the bearer token. ``None`` disables auth entirely."""
     sse_keepalive_seconds: float = Field(default=10.0, gt=0.0)
@@ -69,7 +112,7 @@ class ServerConfig(_Strict):
     @field_validator("sse_keepalive_mode")
     @classmethod
     def _known_mode(cls, v: str) -> str:
-        if v not in ("chunk", "comment", "off"):
+        if v not in schema.KEEPALIVE_MODES:
             raise ValueError(
                 f"sse_keepalive_mode must be chunk, comment or off, got {v!r}"
             )
@@ -128,7 +171,7 @@ class AliasConfig(_Strict):
 
     @model_validator(mode="after")
     def _no_kwarg_shadowing(self) -> "AliasConfig":
-        for reserved in ("enable_thinking", "reasoning_effort", "add_generation_prompt"):
+        for reserved in schema.RESERVED_TEMPLATE_KWARGS:
             if reserved in self.template_kwargs:
                 raise ValueError(
                     f"template_kwargs may not set {reserved!r}; it has its own field"
@@ -208,7 +251,12 @@ class LimitsConfig(_Strict):
 
 
 class TitanConfig(_Strict):
-    """The whole configuration. Built once, at startup, and never mutated."""
+    """The API's view of the configuration. Built once, at startup, never mutated.
+
+    A projection of :class:`titan.config.schema.TitanConfig`, not a second
+    definition of it: :meth:`from_schema` is how the wiring builds this, and
+    every field below has a counterpart in the canonical schema.
+    """
 
     server: ServerConfig = Field(default_factory=ServerConfig)
     model: ModelConfig
@@ -219,7 +267,12 @@ class TitanConfig(_Strict):
         return cls.model_validate(dict(data))
 
     @classmethod
-    def from_file(cls, path: str | os.PathLike[str]) -> "TitanConfig":
+    def from_file(
+        cls,
+        path: str | os.PathLike[str],
+        *,
+        overrides: Sequence[str] = (),
+    ) -> "TitanConfig":
         """Load from a ``.toml`` or ``.json`` file, chosen by suffix."""
         p = Path(path)
         raw = p.read_bytes()
@@ -229,23 +282,176 @@ class TitanConfig(_Strict):
             data = tomllib.loads(raw.decode("utf-8"))
         if not isinstance(data, dict):
             raise ValueError(f"config at {p} is not a table")
+        if overrides:
+            data = schema.apply_overrides(data, overrides)
         return cls.from_mapping(data)
 
+    # -- the bridge to the canonical schema --------------------------------
+    @classmethod
+    def from_schema(cls, core: CoreConfig) -> "TitanConfig":
+        """Project the canonical config onto the sections the API reads."""
+        return cls(
+            server=ServerConfig(
+                host=core.server.host,
+                port=core.server.port,
+                api_key_file=Path(core.server.api_key_file)
+                if core.server.api_key_file
+                else None,
+                sse_keepalive_seconds=core.server.sse_keepalive_seconds,
+                sse_keepalive_mode=core.server.sse_keepalive_mode,
+            ),
+            model=ModelConfig(
+                name=core.model.resolved_name(),
+                path=Path(core.model.path),
+                sampling=_sampling_from_schema(core.model.sampling),
+                enable_thinking=core.model.enable_thinking,
+                reasoning_effort=core.model.reasoning_effort,
+                aliases={
+                    a.name: AliasConfig(
+                        enable_thinking=a.enable_thinking,
+                        reasoning_effort=a.reasoning_effort,
+                        sampling=_sampling_from_schema(a.sampling),
+                        template_kwargs=dict(a.template_kwargs),
+                    )
+                    for a in core.model.aliases
+                },
+            ),
+            limits=LimitsConfig(
+                max_tokens=core.limits.max_tokens,
+                max_context=core.limits.max_context,
+            ),
+        )
 
-def load_config(path: str | os.PathLike[str] | None = None) -> TitanConfig:
-    """Load the config from ``path``, else from ``$TITAN_CONFIG``.
+    def to_schema(self, base: CoreConfig | None = None) -> CoreConfig:
+        """Fold this view back into a canonical config.
 
-    This function is the *only* place in Titan that touches ``os.environ``, and
-    it reads exactly one name. If neither an argument nor the variable is set,
-    that is an error rather than a guess: an inference server that silently
-    starts on defaults will serve a model nobody chose.
+        ``base`` supplies the sections the API does not own (scheduler, cache,
+        speculation, kernels, observability); without one they take their
+        defaults. Used by tests and by anything that starts from an API-shaped
+        config and needs a whole one.
+        """
+        core = base or CoreConfig(model=schema.ModelConfig(path=str(self.model.path)))
+        return dataclasses.replace(
+            core,
+            server=schema.ServerConfig(
+                host=self.server.host,
+                port=self.server.port,
+                api_key_file=str(self.server.api_key_file)
+                if self.server.api_key_file
+                else "",
+                request_timeout_s=core.server.request_timeout_s,
+                max_body_mb=core.server.max_body_mb,
+                sse_keepalive_seconds=self.server.sse_keepalive_seconds,
+                sse_keepalive_mode=self.server.sse_keepalive_mode,
+            ),
+            model=dataclasses.replace(
+                core.model,
+                path=str(self.model.path),
+                name=self.model.name,
+                sampling=_sampling_to_schema(self.model.sampling),
+                enable_thinking=self.model.enable_thinking,
+                reasoning_effort=self.model.reasoning_effort,
+                aliases=tuple(
+                    schema.AliasConfig(
+                        name=name,
+                        enable_thinking=a.enable_thinking,
+                        reasoning_effort=a.reasoning_effort,
+                        sampling=_sampling_to_schema(a.sampling),
+                        template_kwargs=dict(a.template_kwargs),
+                    )
+                    for name, a in sorted(self.model.aliases.items())
+                ),
+            ),
+            limits=schema.LimitsConfig(
+                max_tokens=self.limits.max_tokens,
+                max_context=self.limits.max_context,
+            ),
+        )
+
+
+def _sampling_from_schema(s: schema.SamplingConfig) -> SamplingConfig:
+    return SamplingConfig(
+        temperature=s.temperature,
+        top_p=s.top_p,
+        top_k=s.top_k,
+        min_p=s.min_p,
+        repetition_penalty=s.repetition_penalty,
+        max_tokens=s.max_tokens,
+    )
+
+
+def _sampling_to_schema(s: SamplingConfig) -> schema.SamplingConfig:
+    return schema.SamplingConfig(
+        temperature=s.temperature,
+        top_p=s.top_p,
+        top_k=s.top_k,
+        min_p=s.min_p,
+        repetition_penalty=s.repetition_penalty,
+        max_tokens=s.max_tokens,
+    )
+
+
+def resolve_config_path(path: str | os.PathLike[str] | None) -> Path:
+    """``path``, else ``$TITAN_CONFIG``, else an error.
+
+    This function is the *only* place in Titan that touches the process
+    environment, and it reads exactly one name. If neither an argument nor the
+    variable is set, that is an error rather than a guess: an inference server
+    that silently starts on defaults will serve a model nobody chose.
     """
-    if path is None:
-        env = os.environ.get(TITAN_CONFIG_ENV)
-        if not env:
-            raise ValueError(
-                f"no config path given and {TITAN_CONFIG_ENV} is unset; "
-                "Titan does not start on implicit defaults"
-            )
-        path = env
-    return TitanConfig.from_file(path)
+    if path is not None:
+        return Path(path)
+    found = os.environ.get(TITAN_CONFIG_ENV)
+    if not found:
+        raise ValueError(
+            f"no config path given and {TITAN_CONFIG_ENV} is unset; "
+            "Titan does not start on implicit defaults"
+        )
+    return Path(found)
+
+
+def load_core(
+    path: str | os.PathLike[str] | None = None,
+    overrides: Sequence[str] = (),
+) -> CoreConfig:
+    """Read a config file and build the canonical config. The one parse point.
+
+    TOML by default, JSON when the suffix says so. Both go through the same
+    dataclass parse and the same validation, so a JSON config cannot pass a
+    check a TOML one would fail.
+    """
+    resolved = resolve_config_path(path)
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"cannot read config {resolved}: {exc}") from None
+    if resolved.suffix == ".json":
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"{resolved} is not valid JSON: {exc}") from None
+        if not isinstance(data, dict):
+            raise ConfigError(f"config at {resolved} is not a table")
+        core = CoreConfig.from_mapping(schema.apply_overrides(data, overrides))
+        core = dataclasses.replace(
+            core,
+            overrides=core.overrides + tuple(overrides),
+            source=str(resolved),
+        )
+        core.validate()
+        return core
+    return CoreConfig.from_toml(text, overrides=overrides, source=str(resolved))
+
+
+def load_config(
+    path: str | os.PathLike[str] | None = None,
+    overrides: Sequence[str] = (),
+) -> TitanConfig:
+    """Load the API's config view from ``path``, else from ``$TITAN_CONFIG``.
+
+    Goes through the canonical parse and projects the result, so this and
+    :func:`titan.config.wiring.load_config` cannot disagree about what a file
+    means. It stays a separate function because a check that only cares about
+    the HTTP surface should not have to construct a whole engine config.
+    """
+    return TitanConfig.from_schema(load_core(path, overrides))

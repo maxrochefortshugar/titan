@@ -22,7 +22,7 @@ dependencies = [
 dev = ["pytest", "anyio", "httpx"]
 
 [project.scripts]
-titan = "titan.api.main:main"
+titan = "titan.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["titan*"]

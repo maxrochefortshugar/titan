@@ -15,15 +15,34 @@ Construction order is fixed by dependency, not by taste:
 
 The backend's ``warmup()`` runs after the registry is populated and before the
 API binds its port, so no client ever pays for Metal compilation.
+
+Every cross-layer import happens inside a function, not at module scope. Two
+reasons, and the second is the one that matters day to day. Importing this
+module must not pull MLX, Metal sources or a checkpoint reader into a process
+that only wants to check a config file. And half the adapters are still being
+written, so a module-scope import of one of them would make the whole wiring
+unimportable; instead each builder raises a :class:`NotImplementedError` that
+names the module still owed, and the parts that do exist can be built and tested
+today against fakes for the parts that do not.
 """
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Protocol, Sequence
 
+from titan.config import settings
 from titan.config.schema import TitanConfig
+from titan.core.errors import ConfigError
 
-__all__ = ["Runtime", "build_runtime", "load_config"]
+__all__ = [
+    "Runtime",
+    "TitanRuntime",
+    "Parts",
+    "build_runtime",
+    "load_config",
+    "read_config",
+]
 
 
 class Runtime(Protocol):
@@ -39,16 +58,386 @@ class Runtime(Protocol):
     def stop(self, drain_timeout_s: float) -> None: ...
 
 
-def load_config(path: str, overrides: tuple[str, ...] = ()) -> TitanConfig:
-    """Read the TOML file, apply ``key.path=value`` overrides, validate, return.
+# ---------------------------------------------------------------------------
+# config loading
+# ---------------------------------------------------------------------------
+
+
+def read_config(path: str | None = None) -> str:
+    """Text of the config file, resolving ``$TITAN_CONFIG`` when path is None."""
+    resolved = settings.resolve_config_path(path)
+    try:
+        return resolved.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"cannot read config {resolved}: {exc}") from None
+
+
+def load_config(path: str | None = None, overrides: Sequence[str] = ()) -> TitanConfig:
+    """Read the config file, apply ``key.path=value`` overrides, validate, return.
 
     Raises :class:`~titan.core.errors.ConfigError` on the first problem, with
     the offending key named. Never falls back to a default for a key the file
     got wrong: a typo must stop the process, not silently change behaviour.
+
+    The parse itself lives in :func:`titan.config.settings.load_core`, because
+    that module owns the one environment read Titan allows and there is no
+    reason for two functions to know how to turn a path into a config.
     """
-    raise NotImplementedError
+    return settings.load_core(path, tuple(overrides))
 
 
-def build_runtime(config: TitanConfig) -> Runtime:
-    """Build the object graph. Loads the model; does not bind the port."""
-    raise NotImplementedError
+# ---------------------------------------------------------------------------
+# the graph
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Parts:
+    """Pre-built components, for tests and for partial runtimes.
+
+    Anything set here is used as is and its builder never runs. That is the
+    whole seam: a wiring test hands in a fake backend, a fake store and a fake
+    engine, and exercises the real construction order against them with no MLX
+    import, no checkpoint and no GPU.
+    """
+
+    profiler: Any = None
+    registry: Any = None
+    backend: Any = None
+    tokenizer: Any = None
+    template: Any = None
+    codec: Any = None
+    store: Any = None
+    cache: Any = None
+    cycle: Any = None
+    engine: Any = None
+    app: Any = None
+
+
+@dataclass
+class TitanRuntime:
+    """The assembled graph. Satisfies :class:`Runtime`."""
+
+    config: TitanConfig
+    profiler: Any
+    registry: Any
+    backend: Any
+    tokenizer: Any
+    template: Any
+    codec: Any
+    store: Any
+    cache: Any
+    engine: Any
+    app: Any
+    _started: bool = field(default=False, repr=False)
+
+    @property
+    def scheduler(self) -> Any:
+        """The engine is the scheduler as far as the entry point is concerned."""
+        return self.engine
+
+    def start(self) -> None:
+        """Warm the backend and start the loop. Does not bind a port.
+
+        Binding is uvicorn's job and it happens in :func:`titan.cli.serve`, so
+        that building a runtime in a test can never open a socket.
+        """
+        if self._started:
+            return
+        warmup = getattr(self.backend, "warmup", None)
+        if callable(warmup):
+            warmup()
+        start = getattr(self.engine, "start", None)
+        if callable(start):
+            start()
+        self._started = True
+
+    def stop(self, drain_timeout_s: float = 30.0) -> None:
+        stop = getattr(self.engine, "stop", None)
+        if callable(stop):
+            stop(drain_timeout_s)
+        flush = getattr(self.store, "flush", None)
+        if callable(flush):
+            flush(drain_timeout_s)
+        self._started = False
+
+
+def _owed(module: str, what: str) -> NotImplementedError:
+    """The one shape of failure for a component that does not exist yet."""
+    return NotImplementedError(
+        f"{what} is not implemented yet: {module} is still a stub. "
+        f"Pass a prebuilt one through wiring.Parts to build a runtime without it."
+    )
+
+
+# -- builders ---------------------------------------------------------------
+
+
+def _resolve(module_name: str, attr: str, what: str) -> Any:
+    """Import ``module_name`` and pull ``attr`` off it, or say what is owed."""
+    import importlib  # noqa: PLC0415
+
+    module = importlib.import_module(module_name)
+    found = getattr(module, attr, None)
+    if found is None:
+        raise _owed(module_name, what)
+    return found
+
+
+def build_profiler(config: TitanConfig) -> Any:
+    import time  # noqa: PLC0415
+
+    from titan.observability.profiler import build_profiler as _build  # noqa: PLC0415
+
+    class _Clock:
+        def now(self) -> float:
+            return time.monotonic()
+
+    try:
+        return _build(config.observability, _Clock())
+    except NotImplementedError:
+        raise _owed("titan.observability.profiler", "the profiler") from None
+
+
+def build_registry(config: TitanConfig) -> Any:
+    from titan.kernels.registry import (  # noqa: PLC0415
+        build_registry as _build,
+        reference_only,
+    )
+
+    if config.kernels.reference_only:
+        return reference_only()
+    return _build(config.kernels)
+
+
+def build_backend(config: TitanConfig, registry: Any) -> Any:
+    """Load the checkpoint and wrap it. The one call that costs minutes."""
+    from titan.adapters.mlx import loader  # noqa: PLC0415
+    from titan.adapters.mlx.backend import MLXModelBackend  # noqa: PLC0415
+
+    model, _plan = loader.load_model(
+        config.model.path,
+        mtp_enabled=config.speculation.enabled,
+        mtp_depth=config.speculation.mtp_depth_max,
+        fuse_gate_up=config.model.fuse_gate_up,
+    )
+    return MLXModelBackend(model)
+
+
+def build_tokenizer(config: TitanConfig) -> Any:
+    load = _resolve(
+        "titan.adapters.mlx.tokenizer", "load_tokenizer", "the tokenizer adapter"
+    )
+    return load(config.model.path)
+
+
+def build_template(config: TitanConfig) -> Any:
+    load = _resolve(
+        "titan.adapters.mlx.template", "load_renderer", "the template renderer"
+    )
+    return load(
+        config.model.path,
+        enable_thinking=config.model.enable_thinking,
+        reasoning_effort=config.model.reasoning_effort,
+    )
+
+
+def build_codec(config: TitanConfig, backend: Any) -> Any:
+    """The ``StateCodec`` the store serialises through.
+
+    Owed by the MLX adapter: only the backend knows how a state handle turns
+    into bytes. Until it lands, a runtime is built by passing one through
+    :class:`Parts`.
+    """
+    codec = getattr(backend, "codec", None)
+    if codec is not None:
+        return codec
+    factory = getattr(backend, "state_codec", None)
+    if callable(factory):
+        return factory()
+    raise _owed("titan.adapters.mlx.state", "the state codec")
+
+
+def build_signature(config: TitanConfig, backend: Any) -> Any:
+    """What must match for a stored byte string to mean anything."""
+    from titan.adapters.cache.format import CacheSignature  # noqa: PLC0415
+
+    layout = getattr(backend, "layer_layout", None)
+    if layout is None:
+        raise _owed("titan.adapters.mlx.backend", "the backend's layer layout")
+    return CacheSignature(
+        model_name=config.model.resolved_name(),
+        layer_layout=tuple(layout),
+        block_tokens=config.cache.block_tokens,
+        snapshot_dtype=config.model.dtype.kv,
+    )
+
+
+def build_store(config: TitanConfig, signature: Any) -> Any:
+    factory = _resolve(
+        "titan.adapters.cache.store", "TwoTierStateStore", "the KV state store"
+    )
+    c = config.cache
+    return factory(
+        signature,
+        ssd_dir=c.ssd_dir,
+        hot_budget_bytes=int(c.ram_tier_mb * 1024**2),
+        ssd_capacity_bytes=int(c.ssd_capacity_gb * 1024**3),
+        pending_budget_bytes=int(c.pending_write_budget_mb * 1024**2),
+        max_stall_s=c.max_stall_ms / 1000.0,
+    )
+
+
+def build_cache(config: TitanConfig, store: Any, codec: Any) -> Any:
+    factory = _resolve(
+        "titan.adapters.cache.prefix", "BlockPrefixCache", "the prefix cache"
+    )
+    c = config.cache
+    return factory(
+        store,
+        codec,
+        block_tokens=c.block_tokens,
+        snapshot_grid=c.snapshot_grid,
+        snapshot_at_prompt_end=c.snapshot_at_prompt_end,
+        chunk_tokens=config.scheduler.prefill_chunk,
+        contended_chunk_tokens=c.block_tokens,
+        fine_min_gain_tokens=c.fine_tail_blocks * c.block_tokens if c.fine_tail else 1 << 30,
+        fine_max_pending_bytes=int(c.pending_write_budget_mb * 1024**2),
+    )
+
+
+def build_admission_config(config: TitanConfig) -> Any:
+    """The flat numbers the engine needs, since the engine may not import config."""
+    factory = _resolve(
+        "titan.engine.admission", "AdmissionConfig", "the admission config"
+    )
+    fields = dict(
+        max_sequences=config.scheduler.max_seqs,
+        queue_depth=config.scheduler.queue_depth,
+        max_context=config.limits.max_context,
+        prefill_chunk_tokens=config.scheduler.prefill_chunk,
+        block_tokens=config.cache.block_tokens,
+        snapshot_grid=config.cache.snapshot_grid,
+        memory_guard_gb=config.scheduler.memory_guard_gb
+        * config.scheduler.memory_guard_soft_fraction,
+    )
+    if config.model.weights_gb:
+        # 0 means the config did not say. Passing it would tell the guard the
+        # weights are free, which is worse than letting admission keep its own
+        # measured default.
+        fields["weights_gb"] = config.model.weights_gb
+    return factory(**fields)
+
+
+def build_cycle(
+    config: TitanConfig, *, backend: Any, tokenizer: Any, profiler: Any
+) -> Any:
+    """MTP when speculation is on, the plain single-row loop when it is not."""
+    if config.speculation.enabled:
+        factory = _resolve(
+            "titan.engine.decode_cycle", "MTPDecodeCycle", "the MTP decode cycle"
+        )
+        return factory(
+            backend=backend,
+            tokenizer=tokenizer,
+            profiler=profiler,
+            max_depth=config.speculation.mtp_depth_max,
+            rows_budget=config.scheduler.decode_rows_budget,
+        )
+    factory = _resolve(
+        "titan.engine.decode_cycle", "PlainDecodeCycle", "the plain decode cycle"
+    )
+    return factory(backend=backend, tokenizer=tokenizer, profiler=profiler)
+
+
+def build_engine(
+    config: TitanConfig,
+    *,
+    backend: Any,
+    tokenizer: Any,
+    cache: Any,
+    profiler: Any,
+    cycle: Any = None,
+) -> Any:
+    loop_factory = _resolve("titan.engine.scheduler", "EngineLoop", "the engine loop")
+    engine_factory = _resolve("titan.engine.engine", "TitanEngine", "the engine")
+    cycle = cycle or build_cycle(
+        config, backend=backend, tokenizer=tokenizer, profiler=profiler
+    )
+    loop = loop_factory(
+        backend=backend,
+        tokenizer=tokenizer,
+        cycle=cycle,
+        config=build_admission_config(config),
+        cache=cache,
+        profiler=profiler,
+        rows_budget=config.scheduler.decode_rows_budget,
+    )
+    return engine_factory(loop)
+
+
+def build_app(
+    config: TitanConfig, *, engine: Any, tokenizer: Any, template: Any
+) -> Any:
+    """The FastAPI application, against the API's projection of the config."""
+    from titan.api.openai import ChatDeps, build_app as _build  # noqa: PLC0415
+
+    return _build(
+        ChatDeps(
+            config=settings.TitanConfig.from_schema(config),
+            engine=engine,
+            renderer=template,
+            tokenizer=tokenizer,
+        )
+    )
+
+
+def build_runtime(config: TitanConfig, parts: Parts | None = None) -> TitanRuntime:
+    """Build the object graph. Loads the model; does not bind the port.
+
+    Construction order is the dependency order in the module docstring, and it
+    is not negotiable: the registry exists before the backend because the
+    backend resolves its kernels through it, the store exists after the backend
+    because its cache signature names the backend's layer layout, and the app is
+    last because it is the only part that can be handed to a client.
+    """
+    config.validate()
+    parts = parts or Parts()
+
+    profiler = parts.profiler or build_profiler(config)
+    registry = parts.registry or build_registry(config)
+    backend = parts.backend or build_backend(config, registry)
+    tokenizer = parts.tokenizer or build_tokenizer(config)
+    template = parts.template or build_template(config)
+    codec = parts.codec or build_codec(config, backend)
+    store = parts.store or build_store(config, build_signature(config, backend))
+    cache = parts.cache or build_cache(config, store, codec)
+    engine = parts.engine or build_engine(
+        config,
+        backend=backend,
+        tokenizer=tokenizer,
+        cache=cache,
+        profiler=profiler,
+        cycle=parts.cycle,
+    )
+    app = parts.app or build_app(
+        config, engine=engine, tokenizer=tokenizer, template=template
+    )
+    return TitanRuntime(
+        config=config,
+        profiler=profiler,
+        registry=registry,
+        backend=backend,
+        tokenizer=tokenizer,
+        template=template,
+        codec=codec,
+        store=store,
+        cache=cache,
+        engine=engine,
+        app=app,
+    )
+
+
+def resolved_config_view(config: TitanConfig) -> Mapping[str, Any]:
+    """What ``GET /metrics`` echoes: the resolved config with the key redacted."""
+    return config.to_dict(redact=True)
