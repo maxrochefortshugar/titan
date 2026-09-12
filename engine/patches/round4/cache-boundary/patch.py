@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import weakref
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,9 @@ _STATS = {
     "coarse_first": 0,
     "kept_without_checkpoint": 0,
     "coarse_rejects": 0,
+    "snapshot_calls": 0,
+    "snapshot_ms_total": 0.0,
+    "snapshot_ms_max": 0.0,
 }
 
 
@@ -202,6 +206,7 @@ def install() -> bool:
         (sch, "should_emit_prefill_boundary"),
         (sch.Scheduler, "_enlarge_block_size_for_arrays_cache"),
         (sch.Scheduler, "_maybe_capture_boundary_snapshot"),
+        (sch.Scheduler, "_on_prefill_boundary_snapshot"),
         (sch.Scheduler, "_enable_mtp_boundary_alignment"),
         (BlockAwarePrefixCache, "_commit_split_gdn_checkpoint"),
     )
@@ -342,6 +347,37 @@ def install() -> bool:
     capture.__wrapped__ = stock_capture  # type: ignore[attr-defined]
     sch.Scheduler._maybe_capture_boundary_snapshot = capture
 
+    # ------------------------------------------------------------------ 3b
+    # Time the snapshot emission. It runs on the inference thread and the
+    # cost model has no direct measurement of it, only the 0.29 s difference
+    # between two probe turns. One INFO line per snapshot, about 13 per cold
+    # prefill and one per warm turn.
+    stock_on_boundary = sch.Scheduler._on_prefill_boundary_snapshot
+
+    def on_boundary(self, request_id, snapshot_cache, token_count, *, source="prefill"):
+        t0 = time.perf_counter()
+        pending_before = _pending_snapshot_bytes()
+        try:
+            return stock_on_boundary(
+                self, request_id, snapshot_cache, token_count, source=source
+            )
+        finally:
+            dt = (time.perf_counter() - t0) * 1000.0
+            _STATS["snapshot_calls"] += 1
+            _STATS["snapshot_ms_total"] += dt
+            _STATS["snapshot_ms_max"] = max(_STATS["snapshot_ms_max"], dt)
+            logger.info(
+                "cache-boundary: snapshot at %d took %.0f ms (writer held %.0f MB, "
+                "source=%s)",
+                int(token_count),
+                dt,
+                max(0, pending_before) / (1024 * 1024),
+                source,
+            )
+
+    on_boundary.__wrapped__ = stock_on_boundary  # type: ignore[attr-defined]
+    sch.Scheduler._on_prefill_boundary_snapshot = on_boundary
+
     # ------------------------------------------------------------------ 4
     # MTP commit alignment follows the capture grid, not the block size.
     def align(self) -> None:
@@ -433,6 +469,7 @@ def uninstall() -> bool:
     _unwrap(sch, "should_emit_prefill_boundary")
     _unwrap(sch.Scheduler, "_enlarge_block_size_for_arrays_cache")
     _unwrap(sch.Scheduler, "_maybe_capture_boundary_snapshot")
+    _unwrap(sch.Scheduler, "_on_prefill_boundary_snapshot")
     _unwrap(sch.Scheduler, "_enable_mtp_boundary_alignment")
     _unwrap(BlockAwarePrefixCache, "_commit_split_gdn_checkpoint")
     _INSTALLED = False

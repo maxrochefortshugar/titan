@@ -1,167 +1,134 @@
-# Fine store boundaries that actually store: root cause and fix
+# Fine store boundaries, second pass: why 27648 failed and what the extra snapshot costs
 
-Workstream `round4/cache-boundary`. Read-only against production, no model load, no GPU work
-beyond a few hundred KB of synthetic tensors. Env var: `OMLX_CACHE_FINE_TAIL=512`
-(`OMLX_CACHE_COARSE_CHUNK` defaults to 2048). Import-time install.
+Workstream `round4/cache-boundary`. Read-only against production, no model load, no server, no
+GPU work beyond a few hundred KB of synthetic tensors. Env var `OMLX_CACHE_FINE_TAIL=512`, plus
+three new knobs listed below. Import-time install.
 
-## 1. Why round 3 failed
+## 1. The workbench run
 
-Not the restore path, and not the snapshots. The store side rejected everything.
+| turn | prompt | base cached | base s | 4a cached | 4a s |
+|---|---|---|---|---|---|
+| 1 | 25043 | 0 | 16.35 | 0 | 17.62 |
+| 2 | 26481 | 24576 | 1.72 | 24576 | 2.69 |
+| 3 | 27919 | 24576 | 2.47 | 26112 | 1.66 |
+| 4 | 29357 | 26624 | 2.17 | 26112 | 3.11 |
+| 5 | 30795 | 28672 | 1.82 | 29184 | 1.64 |
+| 6 | 32233 | 30720 | 1.28 | 30720 | 1.57 |
 
-`config.paged_cache_block_size` does three jobs. It is the prefix match and flooring
-granularity (`cache/paged_cache.py:1035` `get_computed_blocks`), the grid on which prefill
-chunks are cut and GDN snapshots emitted (`scheduler.py:3686, 3830, 3973, 5498, 5602, 5735`
-through `prefill_boundaries.py:4` and `:19`), and the grid on which `store_cache` demands a
-committed recurrent sidecar for **every** block. That third job is the one round 3 missed.
+Warm turns recomputed 11617 tokens under stock and 10081 under the patch, so the store side
+mostly worked. One store did not, and the median got worse.
 
-The chain: `cache/prefix_cache.py:1285` calls `_commit_split_gdn_checkpoint`
-(`prefix_cache.py:410`) for each newly allocated block, which calls
-`_BoundarySnapshotProvider.commit_gdn_checkpoint` (`scheduler.py:1743`), which calls
-`take_staged_file(request_id, token_count)` (`cache/boundary_snapshot_store.py:482`) and
-returns False when no snapshot was staged at exactly that token count. On False,
-`prefix_cache.py:1294-1329` logs "Rejecting split-GDN placeholder block N", deletes the SSD
-block, pops it from the table and **breaks**. With block size 512 and snapshots still only at
-2048 multiples, the very first block (end 512) had no staged file, so the store truncated to
-zero blocks. The `storing 26112/26482 ... 12 intermediate snapshots` lines in
-`server-plain.log.133730` are the scheduler's optimistic pre-store log; the truncation happens
-after. Hence `cached=0` on every warm turn. The dedup branch (`prefix_cache.py:1024-1046`) has
-the same gate, so a second attempt could not repair it either.
+## 2. Why 27648 had no committed checkpoint
 
-Restore was never the problem: the split-GDN endpoint search at `prefix_cache.py:3186-3330`
-already walks back from the last block to the newest one whose sidecar loads and truncates the
-chain there, counting `_gdn_checkpoint_walkbacks`.
+The suffix crossed a coarse boundary. Turn 3 restored 26112 and had 1807 tokens to prefill. The
+round-4a tail clamp jumped straight to the fine target, so it ran one chunk of 1536 tokens from
+26112 to 27648 and then 271 more. That chunk stepped over 26624, which is 13 x 2048, without
+ending there, so `should_emit_prefill_boundary` never fired at 26624 and no snapshot was staged.
+At store time `store_cache` walks every new block and demands a committed sidecar
+(`cache/prefix_cache.py:1285-1330`). The block ending at 26624 is coarse-aligned, so the
+carve-out in the patch deliberately did not cover it, `commit_gdn_checkpoint` found nothing
+staged (`scheduler.py:1753`, `cache/boundary_snapshot_store.py:482`), and the chain truncated at
+26112. Block 150 in the log is that block, the first of the three the turn allocated.
 
-Where the 2048 assumption lives:
+The other four boundaries survived because no coarse multiple sat inside their suffixes: 26112,
+29184, 30720 and 31744 are all reachable from their restore points without crossing one, or the
+one they crossed was the chunk end itself. Suffix length, remainder size and block numbering
+have nothing to do with it.
 
-| site | role |
-|---|---|
-| `scheduler.py:2848` `_ARRAYS_CACHE_BLOCK_SIZE = 2048` | pins block size in `_enlarge_block_size_for_arrays_cache` (`:2850-2901`) |
-| `scheduler.py:2749` `_POOLING_ROTATING_BLOCK_SIZE = 2048` | same for pooling/rotating models, not this one |
-| `scheduler.py:3686, 5498` | `clamp_prefill_chunk_to_boundary`, chunk width |
-| `scheduler.py:3830, 3973, 5602, 5735` | `should_emit_prefill_boundary`, snapshot emission |
-| `scheduler.py:7146-7160` | `_maybe_capture_boundary_snapshot`, decode-time captures |
-| `scheduler.py:7038` | `_enable_mtp_boundary_alignment` |
-| `scheduler.py:7253-7285` | `_get_boundary_store_override`, the `tc % block_size == 0` gate that produces `boundary_snapshot_unavailable available_boundaries=0` |
-| `scheduler.py:7698` | store fallback floor `(len // block_size) * block_size` |
-| `cache/paged_cache.py:1035` | lookup floors to whole blocks |
-| `cache/prefix_cache.py:851-870` | store drops the trailing partial block |
-| `cache/prefix_cache.py:1285-1330` | per-block sidecar commit, the failure |
-| `cache/paged_ssd_cache.py:2812` | `gdn_cache_signature_for` embeds `block_size` in the sidecar signature, so changing it invalidates existing sidecars and blocks |
+## 3. The corrected patch
 
-## 2. The change
+Same file, same env flag. Four changes on top of round 4a.
 
-Four small pieces, all in `patch.py`:
+1. The tail clamp stops at the next coarse boundary first when the suffix crosses one, and takes
+   the fine cut on the following call. Every coarse-aligned block again ends a chunk, so it
+   always has a snapshot.
+2. Emission is now restricted to the coarse grid plus the fine cuts the patch itself chose.
+   Without that, a block size of 512 emits a 110 MiB snapshot at every chunk end whenever the
+   scheduler drops the prefill step to 512 tokens under decode contention
+   (`scheduler.py:1542-1550, 5177-5197`), four times the stock snapshot rate on the path that is
+   already contended.
+3. Three gates decide whether the extra fine cut is worth it: `OMLX_CACHE_FINE_TAIL_MIN_GAIN`
+   (default 384 tokens, the break-even from section 4), `OMLX_CACHE_FINE_TAIL_MIN_REMAINDER`
+   (default 0, see below) and `OMLX_CACHE_FINE_TAIL_MAX_PENDING_MB` (default 192, skip the cut
+   while the snapshot writer still holds that much unwritten). Each gate falls back to the stock
+   cut, never to a cut the store cannot commit.
+4. A rejected coarse boundary now logs the token count and the two grids, which the stock line
+   (block id only) does not, and each snapshot logs its wall time and the writer backlog it saw.
 
-1. chunking: 2048 forwards for the prompt body, and the last chunk is cut once more so it ends
-   at the highest 512 multiple at or below the prompt end. One extra snapshot per prompt.
-2. `paged_cache_block_size` drops to 512 after `_enlarge_block_size_for_arrays_cache` runs, so
-   matching, storing and restoring can address that boundary.
-3. **the fix**: a block whose end is off the coarse grid may be stored without a committed
-   sidecar instead of truncating the chain. Its QSA KV is complete and sliceable; it simply
-   cannot be a restore endpoint, and the walk-back already handles that. A missing sidecar on a
-   2048 multiple is still an anomaly and still truncates, as in stock.
-4. decode-time captures and MTP commit alignment stay on the coarse grid, so lowering the block
-   size does not quadruple 110 MiB snapshots during generation. Cost: an output-inclusive store
-   still floors its decode tail to 2048.
+A small remainder is not the expensive case, so `MIN_REMAINDER` ships off. Splitting a chunk of
+T into T1 and T2 costs exactly one extra fixed chunk launch whatever the ratio, and the
+attention work is identical, so a 271-token remainder is no worse than a 900-token one.
 
-Cost per prompt: one extra forward launch, one extra sidecar, 4x the paged block count (same KV
-bytes, 12 MiB per file instead of 48 MiB).
+## 4. Cost model
 
-| quantity | stock | patched |
+`cost_model.py` predicts a turn as `K + r * cached + sum over chunks of (F + T * (a + b * ctx))
++ S per snapshot`. F = 73 ms and a = 0.4488 ms/token solve the audit's 992 ms per cold 2048
+chunk together with its 22 percent penalty on 512-token chunks; b = 7.63e-6 is the audit's
+992 to 1472 ms slope over 32k; r = 2.77e-3 ms/token matches all five measured reconstruct times
+(reconstruct is bytes-bound, so 48 blocks of 512 cost what 12 of 2048 cost, which rules the
+block count out). K = 53 ms is fitted on the base arm.
+
+S is the one term the run pins directly. On turn 6 both arms restore 30720 and prefill 1513
+tokens, and the only difference is one extra cut and one extra snapshot: 1.57 against 1.28 s, so
+F + S is 290 ms and S is about 210 ms. Turn 2 has the same structural difference and cost 970
+ms, because it lands while the writer is still draining turn 1's store of 48 blocks and 12
+sidecars, and `save()` runs on the inference thread and can wait up to 2 s for the 512 MB
+pending budget (`cache/boundary_snapshot_store.py:296-312`). That is the turn-2 slowdown: the
+extra tail snapshot, made expensive by the preceding store, not the block count and not the
+split. Turn 1 is structurally identical in both arms and still ran 7.8 percent slower, so treat
+about that much of every fine-arm number as arm drift.
+
+Model against the run, with drift applied to the fine arm:
+
+| turn | stock model / measured | 4a model / measured |
 |---|---|---|
-| GDN sidecars, 30k prompt | 14 x 110.2 MiB = 1.51 GiB | 15 x 110.2 MiB = 1.61 GiB |
-| snapshot pending buffer peak | 110.2 MiB in flight | 110.2 MiB in flight (budget 512 MB) |
-| SSD KV, 30k prompt | 703 MiB in 14 blocks | 738 MiB in 60 blocks |
-| uniform 512 blocks over 64k (rejected) | n/a | 128 snapshots, 13.8 GiB |
+| 2 | 1.41 / 1.72 | 1.83 / 2.69 |
+| 3 | 2.62 / 2.47 | 1.78 / 1.66 |
+| 4 | 2.28 / 2.17 | 3.42 / 3.11 |
+| 5 | 1.91 / 1.82 | 1.70 / 1.64 |
+| 6 | 1.25 / 1.28 | 1.65 / 1.57 |
 
-## 3. Test
+Every turn lands within 0.31 s except turn 2, the backpressure turn.
 
-`test_fine_tail.py` drives the real `PagedCacheManager`, `PagedSSDCacheManager`,
-`BlockAwarePrefixCache`, `BoundarySnapshotSSDStore` and `_BoundarySnapshotProvider` with a
-fabricated two-layer cache (one ArraysCache layer for the 36 GDN layers, one KVCache layer for
-the 12 QSA layers) whose every value is a pure function of the token count. Prefill 10,167,
-store, then a 13,084-token request sharing the first 10,167, lookup, reconstruct.
+## 5. Predicted next run
 
-| arm | stored | cached on the warm turn |
-|---|---|---|
-| stock, block 2048 | 8192 | 8192 |
-| round-3 repro (block 512, stock commit gate) | 0 | 0 |
-| patched, `OMLX_CACHE_FINE_TAIL=512` | 9728 | 9728 |
+| turn | stock | fine 512 | fine 1024 |
+|---|---|---|---|
+| 2 | 1.41 | 1.69 | 1.70 |
+| 3 | 2.62 | 1.94 | 2.27 |
+| 4 | 2.28 | 1.90 | 1.62 |
+| 5 | 1.91 | 1.57 | 1.91 |
+| 6 | 1.25 | 1.53 | 1.53 |
+| warm total | 9.46 | 8.64 | 9.02 |
+| median | 1.91 | 1.69 | 1.70 |
 
-The repro arm reproduces the production log line verbatim, which pins the root cause. The
-patched arm restores GDN state and KV bit-identical to a fresh prefill to 9728 (byte compare on
-the raw buffers), five aligned boundaries survive so the trailing-partial path never reports
-`available_boundaries=0`, and prompts of 1500, 2048 and 4096 emit exactly the same boundaries
-and floor to the same length as stock.
+Fine 512 wins while S stays under about 400 ms; at S = 600 ms both fine grids lose to stock, and
+the new snapshot timing line will say which regime the machine is in. Cached counts should be 0,
+24576, 26112, 27648, 29184, 30720, and warm turns should recompute 8545 tokens against 11617
+under stock.
+
+## 6. Test
 
 ```
 cd ~/inference-server/kernels/round4/cache-boundary
 PYTHONPATH=/Applications/oMLX.app/Contents/Resources:/Applications/oMLX.app/Contents/Resources/Python/framework-mlx-base/lib/python3.11/site-packages \
   ~/inference-server/kdev/bin/python test_fine_tail.py
+~/inference-server/kdev/bin/python cost_model.py
 ```
 
-Verified separately with the bundled interpreter: `install()` returns False without the env
-var, True and idempotent with it, `clamp(4096, cache_tokens=0)` stays 2048,
-`clamp(1975, cache_tokens=8192)` returns 1536 so the chunk ends at 9728, a 300-token tail passes
-through unsplit, and `uninstall()` restores the stock 512 clamp.
+Section (e) replays all six probe turns through the real `PagedCacheManager`,
+`PagedSSDCacheManager`, `BlockAwarePrefixCache`, `BoundarySnapshotSSDStore` and
+`_BoundarySnapshotProvider` in three arms. The stock arm reproduces the measured base cached
+sequence, the round-4a arm reproduces the measured fine sequence including the failed 27648
+store, and the fixed arm stores every fine boundary. Sections (a) to (d) are unchanged: bit
+identical GDN and KV restore, and no change below 2048 or on a 2048 multiple. Section (f) covers
+the three gates and the emission guard. All 26 checks pass.
 
-## 4. Expected saving
+## 7. Next step
 
-Recomputed tokens on turn k are the new text plus whatever turn k-1 discarded at store time.
-The measured discard is a median of 1155 and p90 1734 tokens; on a 512 grid it becomes uniform
-on [0, 512), mean 256.
-
-| | stock | patched | saved |
-|---|---|---|---|
-| median recomputed | 2000 | 1101 | 899 tok, 0.56 s at 1600 tok/s |
-| p90 recomputed | 3343 | 1865 | 1478 tok, 0.92 s |
-
-On the six-turn probe (prompts 25043 to 32233, +1438 per turn), warm turns 2 to 6 recompute
-11,617 tokens today against a predicted 8,545, down 26.4%, 1.9 s over five turns. The larger
-effect is on the 603 stores currently dropped with `available_boundaries=0`: a suffix that
-crosses no 2048 boundary crosses a 512 one, so turn 2 of the probe starts storing instead of
-forcing turn 3 to recompute 3343.
-
-## 5. Workbench plan
-
-Needs `~/inference-server/staging/GPU_FREE`, which does not exist right now. Never touch 8083.
-Because the sidecar signature embeds the block size, give the patched arm a cold cache dir or
-accept that the first turn of each arm is cold.
-
-```
-cd ~/inference-server/staging
-BASE=(OMLX_PLE_PACKED=1 OMLX_PLE_PACKED_MODE=rows OMLX_QWEN4_BF16_NORM=1 \
-      OMLX_QWEN4_GDN_NORM_GATE=1 OMLX_WSUM_TOPK10=1 OMLX_WSUM_TOPK10_MIN_TOKENS=64 \
-      OMLX_MTP_SHORTLIST_DRAFT=1 OMLX_MOE_INT8_PREFILL=1 OMLX_MOE_INT8_SKIP_DOWN=1 \
-      OMLX_GUARD_GB=110)
-POST=~/inference-server/kernels/round2/gdn-norm/patch.py,~/inference-server/kernels/round2/wsum10/patch.py
-IMP=~/inference-server/kernels/round2/mtp/patch.py:install_shortlist_draft
-
-# arm 1
-env "${BASE[@]}" OMLX_ROUND2_PATCHES="$POST" OMLX_ROUND2_IMPORT_PATCHES="$IMP" \
-  ./staging.sh start plain && sleep 20
-~/inference-server/kdev/bin/python prefill_ab.py --tag cache-base4 --tokens 32000 --turns 6
-
-# arm 2
-env "${BASE[@]}" OMLX_ROUND2_PATCHES="$POST" \
-  OMLX_ROUND2_IMPORT_PATCHES="$IMP,~/inference-server/kernels/round4/cache-boundary/patch.py" \
-  OMLX_CACHE_FINE_TAIL=512 ./staging.sh start plain && sleep 20
-~/inference-server/kdev/bin/python prefill_ab.py --tag cache-fine-tail --tokens 32000 --turns 6
-./staging.sh stop
-```
-
-Expected cached counts per turn:
-
-| turn | prompt | base (measured) | fine tail (predicted) |
-|---|---|---|---|
-| 1 | 25043 | 0 | 0 |
-| 2 | 26481 | 24576 | 24576 |
-| 3 | 27919 | 24576 | 26112 |
-| 4 | 29357 | 26624 | 27648 |
-| 5 | 30795 | 28672 | 29184 |
-| 6 | 32233 | 30720 | 30720 |
-
-Acceptance: every warm cached count is a 512 multiple and matches the table, turns 3 to 5 drop
-by roughly 0.5 s each against the base run (base 3.06, 2.66, 2.21 s), the median warm latency
-does not regress, the server log shows `Using boundary cache snapshot` on every turn with no
-`boundary_snapshot_unavailable`, and the six answers are identical to the base arm.
+`store_exact_prefix` already knows how to persist an unaligned terminal block and refuses
+split-GDN layouts only because nothing commits a terminal sidecar
+(`cache/prefix_cache.py:1452-1460`). The last prefill chunk already ends at the prompt end, so a
+snapshot there needs no extra chunk and no extra forward, and it would cache the whole prompt
+instead of a 512-token floor. One snapshot per turn against a mean gain of 1024 tokens rather
+than 768, with the F term gone. Worth a round 5.

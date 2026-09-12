@@ -223,6 +223,57 @@ class Arm:
         restored = self.cache.reconstruct_cache(table, promote_to_hot_cache=False)
         return table.num_tokens, restored
 
+    def turn(self, rid: str, tokens: list[int]) -> dict:
+        """One conversation turn: look up, prefill the suffix, store.
+
+        Mirrors the scheduler's order for a warm request: fetch_cache builds
+        the block table from the matched prefix, the real clamp and emit
+        predicates decide where snapshots land, and store_cache runs against
+        that block table so it allocates only the new blocks.
+        """
+        total = len(tokens)
+        cached, _restored = self.lookup_and_restore(rid, tokens)
+        emitted = prefill_schedule(total, self.block_size, start=cached)
+        for tc in emitted:
+            self.snapshots.save(
+                rid,
+                tc,
+                [None, None],
+                lambda _snap, _tc=tc: (extracted_at(_tc), None),
+                block_size=self.block_size,
+            )
+        valid = sorted(
+            tc for tc in emitted if cached < tc <= total and tc % self.block_size == 0
+        )
+        if not valid:
+            return {
+                "cached": cached,
+                "suffix": total - cached,
+                "emitted": emitted,
+                "stored": cached,
+            }
+        latest = valid[-1]
+        provider = _BoundarySnapshotProvider(
+            store=self.snapshots,
+            request_id=rid,
+            valid_tcs=[tc for tc in valid if tc != latest],
+            in_memory_snapshots={},
+            paged_ssd_manager=self.ssd,
+        )
+        table = self.cache.store_cache(
+            rid,
+            tokens[:latest],
+            extracted_at(latest),
+            boundary_snapshots=provider,
+            hot_cache_write_back=False,
+        )
+        return {
+            "cached": cached,
+            "suffix": total - cached,
+            "emitted": emitted,
+            "stored": table.num_tokens if table else 0,
+        }
+
 
 def bits_equal(a, b) -> bool:
     a, b = mx.array(a), mx.array(b)
@@ -277,6 +328,74 @@ def run_arm(
             patch_mod.uninstall()
             os.environ.pop("OMLX_CACHE_FINE_TAIL", None)
         shutil.rmtree(root, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# The workbench probe, replayed against the real cache classes.
+# prefill_ab.py --turns 6 on a ~25k conversation that grows by 1438 tokens.
+# --------------------------------------------------------------------------
+PROBE_PROMPTS = [25_043, 26_481, 27_919, 29_357, 30_795, 32_233]
+
+
+def install_round4a() -> None:
+    """Re-create the round-4a clamp on top of the installed patch.
+
+    Round 4a jumped straight from the reused prefix to the last fine multiple,
+    so a suffix that crossed a coarse boundary skipped it, and it had no
+    emission guard. Both are needed to reproduce the 27648 store failure.
+    """
+    import omlx.scheduler as sch
+
+    stock_clamp = sch.clamp_prefill_chunk_to_boundary.__wrapped__
+
+    def legacy(chunk_tokens: int, *, cache_tokens: int, block_size: int) -> int:
+        if block_size <= 0 or chunk_tokens <= 0:
+            return max(1, chunk_tokens)
+        if chunk_tokens >= COARSE:
+            return stock_clamp(
+                chunk_tokens, cache_tokens=cache_tokens, block_size=COARSE
+            )
+        last_fine = ((cache_tokens + chunk_tokens) // FINE) * FINE
+        if last_fine > cache_tokens:
+            return last_fine - cache_tokens
+        return chunk_tokens
+
+    legacy.__wrapped__ = stock_clamp
+    sch.clamp_prefill_chunk_to_boundary = legacy
+    sch.should_emit_prefill_boundary = sch.should_emit_prefill_boundary.__wrapped__
+
+
+def run_probe(name: str, block_size: int, patched: bool, round4a: bool = False):
+    """Replay the six probe turns and report cached/stored per turn."""
+    root = Path(tempfile.mkdtemp(prefix=f"probe-{name}-"))
+    if patched:
+        os.environ["OMLX_CACHE_FINE_TAIL"] = str(FINE)
+        os.environ["OMLX_CACHE_COARSE_CHUNK"] = str(COARSE)
+        assert patch_mod.install(), "patch install failed"
+        if round4a:
+            install_round4a()
+    try:
+        arm = Arm(root, block_size)
+        full = [(i * 7919 + 13) % 100_000 for i in range(PROBE_PROMPTS[-1])]
+        turns = []
+        for i, n in enumerate(PROBE_PROMPTS):
+            turns.append(arm.turn(f"{name}-turn{i + 1}", full[:n]))
+        arm.close()
+        return turns
+    finally:
+        if patched:
+            patch_mod.uninstall()
+            os.environ.pop("OMLX_CACHE_FINE_TAIL", None)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def print_turns(name: str, turns: list[dict]) -> None:
+    print(f"  {name}")
+    for i, t in enumerate(turns):
+        print(
+            f"    turn {i + 1}: prompt {PROBE_PROMPTS[i]:>6} cached {t['cached']:>6} "
+            f"suffix {t['suffix']:>5} stored {t['stored']:>6} emitted {t['emitted']}"
+        )
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
@@ -347,6 +466,107 @@ def main() -> int:
             # 1500 has no 2048 block at all; stock stores nothing either way.
             ok &= check(f"{label}: stock emits nothing", s == [], f"{s}")
             ok &= check(f"{label}: patched emits only the fine tail", p == [1024], f"{p}")
+
+    # ------------------------------------------------------------------
+    # (e) the workbench probe, replayed. The round-4a arm must reproduce the
+    # cached sequence the real run measured, including the failed store at
+    # 27648; the fixed arm must store every fine boundary.
+    # ------------------------------------------------------------------
+    print("\n(e) six-turn probe replay")
+    stock_turns = run_probe("stock", COARSE, False)
+    print_turns("stock, block 2048", stock_turns)
+    r4a_turns = run_probe("r4a", FINE, True, round4a=True)
+    print_turns("round 4a (workbench run)", r4a_turns)
+    fixed_turns = run_probe("fixed", FINE, True)
+    print_turns("fixed", fixed_turns)
+
+    measured_base = [0, 24576, 24576, 26624, 28672, 30720]
+    measured_fine = [0, 24576, 26112, 26112, 29184, 30720]
+    expected_fixed = [0, 24576, 26112, 27648, 29184, 30720]
+
+    ok &= check(
+        "(e) stock arm matches the measured base run",
+        [t["cached"] for t in stock_turns] == measured_base,
+        f"{[t['cached'] for t in stock_turns]}",
+    )
+    ok &= check(
+        "(e) round-4a arm reproduces the measured fine run, 27648 store included",
+        [t["cached"] for t in r4a_turns] == measured_fine,
+        f"{[t['cached'] for t in r4a_turns]}",
+    )
+    ok &= check(
+        "(e) round-4a turn 3 crosses 26624 without a snapshot and truncates",
+        r4a_turns[2]["emitted"] == [27648] and r4a_turns[2]["stored"] == 26112,
+        f"emitted={r4a_turns[2]['emitted']} stored={r4a_turns[2]['stored']}",
+    )
+    ok &= check(
+        "(e) fixed turn 3 stops at 26624 first, then cuts at 27648",
+        fixed_turns[2]["emitted"] == [26624, 27648]
+        and fixed_turns[2]["stored"] == 27648,
+        f"emitted={fixed_turns[2]['emitted']} stored={fixed_turns[2]['stored']}",
+    )
+    ok &= check(
+        "(e) fixed arm caches every fine boundary",
+        [t["cached"] for t in fixed_turns] == expected_fixed,
+        f"{[t['cached'] for t in fixed_turns]}",
+    )
+    recomputed = {
+        "stock": sum(t["suffix"] for t in stock_turns[1:]),
+        "round4a": sum(t["suffix"] for t in r4a_turns[1:]),
+        "fixed": sum(t["suffix"] for t in fixed_turns[1:]),
+    }
+    print(f"    warm-turn tokens recomputed: {recomputed}")
+    ok &= check(
+        "(e) the fix recomputes fewer tokens than stock and than round 4a",
+        recomputed["fixed"] == 8545 < recomputed["round4a"] < recomputed["stock"],
+        f"{recomputed}",
+    )
+
+    # ------------------------------------------------------------------
+    # (f) the gates. Each one falls back to the stock cut, never to a cut
+    # that the store cannot commit.
+    # ------------------------------------------------------------------
+    print("\n(f) gates")
+    import omlx.scheduler as sch
+
+    os.environ["OMLX_CACHE_FINE_TAIL"] = str(FINE)
+    os.environ["OMLX_CACHE_FINE_TAIL_MIN_GAIN"] = "1536"
+    patch_mod.install()
+    got = sch.clamp_prefill_chunk_to_boundary(1513, cache_tokens=30720, block_size=FINE)
+    patch_mod.uninstall()
+    os.environ.pop("OMLX_CACHE_FINE_TAIL_MIN_GAIN", None)
+    ok &= check("min_gain 1536 refuses a 1024-token gain", got == 1513, f"got {got}")
+
+    os.environ["OMLX_CACHE_FINE_TAIL_MIN_REMAINDER"] = "512"
+    patch_mod.install()
+    got = sch.clamp_prefill_chunk_to_boundary(1513, cache_tokens=30720, block_size=FINE)
+    patch_mod.uninstall()
+    os.environ.pop("OMLX_CACHE_FINE_TAIL_MIN_REMAINDER", None)
+    ok &= check("min_remainder 512 refuses a 489-token remainder", got == 1513,
+                f"got {got}")
+
+    patch_mod.install()
+    got_coarse = sch.clamp_prefill_chunk_to_boundary(
+        1807, cache_tokens=26112, block_size=FINE
+    )
+    got_fine = sch.clamp_prefill_chunk_to_boundary(
+        1295, cache_tokens=26624, block_size=FINE
+    )
+    emit_512 = sch.should_emit_prefill_boundary(
+        total_tokens=25088, block_size=FINE, last_emitted_tokens=24576
+    )
+    emit_coarse = sch.should_emit_prefill_boundary(
+        total_tokens=26624, block_size=FINE, last_emitted_tokens=26112
+    )
+    patch_mod.uninstall()
+    os.environ.pop("OMLX_CACHE_FINE_TAIL", None)
+    ok &= check("tail stops at the coarse boundary first", got_coarse == 512,
+                f"got {got_coarse}")
+    ok &= check("then cuts at the fine boundary", got_fine == 1024, f"got {got_fine}")
+    ok &= check(
+        "a contended 512-token chunk end emits no snapshot", emit_512 is False
+    )
+    ok &= check("a coarse boundary always emits", emit_coarse is True)
 
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
