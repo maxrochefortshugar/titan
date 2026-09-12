@@ -1,0 +1,53 @@
+context 2052: whole-step ms by arm, paired A B B A
+  arm                           w1 plain       w1 hidden       w4 hidden
+  default                     3.89 +0.00      3.92 +0.00      5.45 +0.00
+  dense-qsa                   3.90 +0.01      3.94 +0.02      5.45 -0.00
+  no-singleton-verify         3.88 -0.01      3.92 -0.01      5.41 -0.05
+  gathered-at-budget          3.97 +0.08      4.04 +0.12      5.66 +0.20
+
+context 4096, width 1, arm decode
+--
+context 4096: whole-step ms by arm, paired A B B A
+  arm                           w1 plain       w1 hidden       w4 hidden
+  default                     3.91 +0.00      3.98 +0.00      5.69 +0.00
+  dense-qsa                   3.91 +0.00      3.98 +0.00      5.69 +0.00
+  no-singleton-verify         3.90 -0.01      3.98 -0.00      5.66 -0.03
+  gathered-at-budget          3.98 +0.08      4.02 +0.04      5.67 -0.02
+
+context 6144, width 1, arm decode
+--
+context 6144: whole-step ms by arm, paired A B B A
+  arm                           w1 plain       w1 hidden       w4 hidden
+  default                     3.92 +0.00      3.98 +0.00      5.69 +0.00
+  dense-qsa                   3.94 +0.02      3.98 -0.00      5.90 +0.21
+  no-singleton-verify         3.91 -0.01      3.95 -0.03      5.73 +0.05
+  gathered-at-budget          3.97 +0.04      4.03 +0.04      5.69 -0.00
+
+context 8192, width 1, arm decode
+--
+context 8192: whole-step ms by arm, paired A B B A
+  arm                           w1 plain       w1 hidden       w4 hidden
+  default                     3.98 +0.00      4.02 +0.00      5.70 +0.00
+  dense-qsa                   3.93 -0.05      4.00 -0.01      6.28 +0.58
+  no-singleton-verify         3.98 -0.00      3.98 -0.04      5.72 +0.03
+  gathered-at-budget          3.99 +0.01      4.04 +0.02      5.71 +0.02
+
+context 16384, width 1, arm decode
+--
+context 16384: whole-step ms by arm, paired A B B A
+  arm                           w1 plain       w1 hidden       w4 hidden
+  default                     4.03 +0.00      4.03 +0.00      5.74 +0.00
+  dense-qsa                   4.01 -0.02      4.02 -0.00      7.37 +1.63
+  no-singleton-verify         4.00 -0.04      4.02 -0.01      5.72 -0.02
+  gathered-at-budget          4.01 -0.02      4.04 +0.02      5.72 -0.02
+
+context 64000, width 1, arm decode
+--
+context 64000: whole-step ms by arm, paired A B B A
+  arm                           w1 plain       w1 hidden       w4 hidden
+  default                     4.15 +0.00      4.15 +0.00      5.83 +0.00
+  dense-qsa                   4.36 +0.21      4.39 +0.24     13.85 +8.02
+  no-singleton-verify         4.12 -0.03      4.38 +0.23      5.82 -0.01
+  gathered-at-budget          4.11 -0.04      4.19 +0.04      5.86 +0.02
+
+wrote bench/decode/round3/elimination.json

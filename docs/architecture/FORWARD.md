@@ -423,3 +423,85 @@ budget once at start.
 Run the sweeps on a quiet GPU, paired, per the protocol in IMPROVEMENTS section
 4, and run `buffers --tokens 12288` on the winning configuration before acting
 on any of it.
+
+---
+
+## 9. The attention arms, and which forward takes which
+
+Appended by ROUND3. Sections 1 to 8 are about the host cost of building the
+graph, which is context-independent. This section is about the one part of the
+forward whose cost is not: the twelve full-attention layers, which read a cache
+that grows.
+
+### The three forwards are not the same forward
+
+The engine runs three one-model forwards and they take three different
+attention paths. Which one a call gets is decided by two flags it does not set
+on purpose.
+
+| forward | rows | `return_hidden` | `target_verify` | arm |
+|---|---|---|---|---|
+| plain decode | 1 | no | no | gathered sparse |
+| decode with a hidden state | 1 | yes | yes | gathered sparse *(was dense)* |
+| verify | 2 to 8 | yes | yes | gathered sparse |
+
+`target_verify` is derived, not passed: `LanguageModel.__call__` sets
+`capture_layer_ids=[]` whenever `return_hidden` is true, and section 3 lists the
+three places that turns into `target_verify` on a layer. It exists so the Gated
+DeltaNet captures the intermediates a rollback replays from. Attention has no
+intermediates to capture, so the flag should not reach it -- but
+`_gathered_text_decode_eligible` tested `not target_verify`, so the middle row
+read the whole cache on all twelve QSA layers. That is 1.4 ms a forward at 64k
+on the checkpoint's geometry, measured by elimination in `bench/decode/
+ROUND3.md` step 2b. It is now routed to the same arm as the other two, behind
+the `qsa_sparse_singleton_verify` route.
+
+### The gathered arm is legal before it is cheaper
+
+The vendored gate is the QSA token budget, 2048: past that there are more
+complete blocks than the indexer may select, so selection has something to
+remove. Cheaper is a different question. The gathered arm reads a flat
+`token_budget + compress_ratio - 1` rows -- 2,051 -- whatever the context, so at
+2048 it is reading more than the dense arm and paying for selection on top.
+
+Measured whole-step on the real-shapes synthetic, paired, in milliseconds for
+two QSA layers (multiply by six for the checkpoint):
+
+| context | width 1 | width 4 |
+|---:|---|---|
+| 2052 | dense ahead by 0.08 | dense ahead by 0.20 |
+| 4096 | dense ahead by 0.08 | level |
+| 6144 | dense ahead by 0.04 | gathered ahead by 0.21 |
+| 8192 | level | gathered ahead by 0.58 |
+| 16384 | level | gathered ahead by 1.63 |
+| 64000 | gathered ahead by 0.21 | gathered ahead by 8.02 |
+
+Two crossovers, because the dense arm's cost rises with the block width and the
+gathered arm's barely does. `_gather_min_context(token_budget, width)` carries
+both, from the `qsa_gather_min_context` and `qsa_gather_min_context_verify`
+routes, and clamps up to the budget so a route cannot make the arm legal
+earlier than the algorithm allows.
+
+The bottom-right cell is the one to remember before touching any of this: the
+gathered verify arm is worth about 48 ms a forward on the checkpoint at 64k. It
+is the largest single item in the long-context forward and it was already on.
+
+### Where the routes live, and why not in `forward_paths`
+
+`titan/adapters/mlx/kernels.py` carries them, next to the registry lookups, on
+the same contract as this document's section 7: a name, a default, a docstring
+line, no environment variables, and `overridden` to scope a change to a block.
+They belong in `models/forward_paths.py` with the rest and should be moved
+there; ROUND3 did not own that file.
+
+### What is still context-dependent, after all of it
+
+A plain decode at 64k costs 1.6 ms more over twelve QSA layers than the same
+decode at 2052, with every arm chosen correctly. That is the sparse arm's own
+growth: the pooled block bank the indexer scores against holds 16,000 slots at
+64k against 512 at 2052, and the two parts that read all of it are the fp32
+cast in `_portable_indexer_scores` and the `mx.argpartition` over the scores.
+Neither is removable by routing. oMLX does not pay them because its
+`qsa.indexer_scores` and `qsa.topk_indices` kernels consume the bf16 bank
+directly; those are two of the four narrow seams
+`titan/adapters/mlx/VENDORED.md` lists as unwired, and they are the next lever.

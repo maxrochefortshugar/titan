@@ -41,6 +41,12 @@ from .qsa_fast import (
 from . import hc_fused
 from .....kernels import get as _titan_op
 from .....kernels import ple_table as _titan_ple_table
+from .....kernels import route as _titan_route
+from .....kernels import (
+    qsa_config as _titan_qsa_config,
+    qsa_geometry as _titan_qsa_geometry,
+    qsa_pool_slots as _titan_qsa_pool_slots,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -587,11 +593,129 @@ class QSAKVCache(_QSAIndexerCache, KVCache):
 class BatchQSAKVCache:
     """Batch KV cache that keeps QSA raw keys and text/MRoPE positions aligned."""
 
+    #: Slots the phased pooled bank grows by. One slot is ``compress_ratio``
+    #: tokens, so this is the block-space twin of ``QSAKVCache.step``.
+    slot_step = 2048
+    #: Columns the raw indexer buffers grow by, as ``QSAKVCache.step``.
+    index_step = 8192
+
     def __init__(self, left_padding):
         self.kv_cache = BatchKVCache(left_padding)
         self.index_keys = None
         self.index_position_ids = None
         self.index_offset = 0
+        self._pooled_bank = None
+        self._pooled_settled = 0
+        self._pooled_ratio = None
+        self._pooled_tag = None
+        self._pooled_pads = None
+        self._index_buffer = None
+        self._index_positions_buffer = None
+        self._index_view = None
+        self._index_positions_view = None
+
+    # -- the phased pooled index bank -------------------------------------
+    #
+    # Rows are left padded and right aligned, so row ``b`` with ``pads[b]``
+    # dead slots at the front starts its own four-token block grid at physical
+    # column ``pads[b]``. Two rows whose padding differs by something that is
+    # not a multiple of the ratio have block grids in different *phases*, and
+    # there is no single pooled key that serves both. The bank is therefore
+    # indexed in phased slot space: slot ``j`` of row ``b`` pools physical
+    # columns ``ratio*j + phase_b`` through ``ratio*j + phase_b + ratio - 1``,
+    # where ``phase_b = pads[b] % ratio``, and row ``b``'s own logical block
+    # ``k`` is slot ``k + pads[b] // ratio``. Selection then runs in slot space
+    # and only the final gather converts to physical columns, which is what
+    # makes the batched output equal the per-row output.
+
+    def _row_pads(self) -> list[int]:
+        """Left padding per row, as host ints.
+
+        One host read per batch composition, not per step: the padding is fixed
+        when rows join and only ``extend``/``filter`` replace the array.
+        """
+        padding = self.left_padding
+        cached = self._pooled_pads
+        if cached is not None and cached[0] is padding:
+            return cached[1]
+        pads = [int(p) for p in padding.tolist()]
+        self._pooled_pads = (padding, pads)
+        return pads
+
+    def slot_geometry(self, compress_ratio: int):
+        """The :class:`QSAGeometry` for this cache at its current width."""
+        return _titan_qsa_geometry(
+            self.index_offset, self._row_pads(), compress_ratio
+        )
+
+    def _invalidate_pooled_slots(self):
+        self._pooled_bank = None
+        self._pooled_settled = 0
+        self._pooled_ratio = None
+        self._pooled_tag = None
+
+    def pooled_index_slots(
+        self,
+        geo,
+        index_key_norm,
+        apply_index_rope,
+        *,
+        cache_tag=None,
+    ) -> mx.array:
+        """The bank for slots ``[0, geo.slots)``, computing only what moved.
+
+        A slot is *settled* once every row's ``ratio`` columns for it have been
+        written, which is ``(width - max_phase) // ratio`` slots. Settled slots
+        never change again, so they are written into the bank once. The one or
+        two slots past that are recomputed every step, in place, because a row
+        whose phase is small completes a slot a step before a row whose phase is
+        large -- and a slot that is not yet complete for a row is masked out for
+        that row by the op, so pooling it early is harmless rather than wrong.
+        """
+        if self.index_keys is None or self.index_position_ids is None:
+            raise ValueError("QSA pooled slots require raw indexer state")
+        ratio = int(geo.ratio)
+        need = int(geo.slots)
+        if (
+            self._pooled_ratio != ratio
+            or self._pooled_tag is not cache_tag
+            or self._pooled_bank is not None
+            and self._pooled_bank.shape[0] != geo.batch
+        ):
+            self._invalidate_pooled_slots()
+            self._pooled_ratio = ratio
+            self._pooled_tag = cache_tag
+
+        max_phase = max(geo.phases) if geo.phases else 0
+        settled = max(0, (geo.width - max_phase) // ratio)
+        settled = min(settled, need)
+        # A trim moves the width backwards, so anything at or past the new
+        # settled point has to be recomputed rather than trusted.
+        start = min(self._pooled_settled, settled)
+
+        capacity = 0 if self._pooled_bank is None else int(self._pooled_bank.shape[1])
+        if need > capacity:
+            grown = ((need + self.slot_step - 1) // self.slot_step) * self.slot_step
+            buffer = mx.zeros(
+                (geo.batch, grown, int(self.index_keys.shape[-1])),
+                dtype=self.index_keys.dtype,
+            )
+            if self._pooled_bank is not None and start:
+                buffer[:, :start] = self._pooled_bank[:, :start]
+            self._pooled_bank = buffer
+
+        if need > start:
+            self._pooled_bank[:, start:need] = _titan_qsa_pool_slots(
+                self.index_keys,
+                self.index_position_ids,
+                geo,
+                start,
+                need - start,
+                index_key_norm,
+                apply_index_rope,
+            )
+        self._pooled_settled = settled
+        return self._pooled_bank[:, :need]
 
     @property
     def offset(self):
@@ -605,16 +729,75 @@ class BatchQSAKVCache:
         return self.kv_cache.update_and_fetch(keys, values)
 
     def update_indexer(self, keys: mx.array, position_ids: mx.array):
+        """Append this step's raw indexer keys and positions.
+
+        This used to be one ``mx.concatenate`` per layer per step, which copies
+        the whole history: 16.6 MB a layer at 64k, 200 MB a step over the
+        twelve QSA layers, to add 128 numbers. The singleton cache has grown
+        into a capacity buffer since ``_QSAIndexerCache`` landed; this is the
+        same idea for the batched one. The buffer is private and
+        ``index_keys`` stays the logical view, so ``extend``, ``filter``,
+        ``trim`` and the state setter can keep replacing the arrays outright --
+        the check below notices and starts a fresh buffer rather than writing
+        into one that no longer backs them.
+        """
+        length = int(keys.shape[1])
+        end = self.index_offset + length
+        promoting = (
+            self.index_position_ids is not None
+            and self.index_position_ids.ndim != position_ids.ndim
+        )
+        reusable = (
+            not promoting
+            and self._index_buffer is not None
+            and self._index_view is self.index_keys
+            and self._index_positions_view is self.index_position_ids
+            and end <= int(self._index_buffer.shape[1])
+        )
         if self.index_keys is None:
-            self.index_keys = keys
-            self.index_position_ids = position_ids
-        else:
-            self.index_keys = mx.concatenate([self.index_keys, keys], axis=1)
-            self.index_position_ids = _append_indexer_positions(
-                self.index_position_ids, position_ids
-            )
-        self.index_offset = self.index_keys.shape[1]
+            self._grow_indexer(keys, position_ids, end)
+        elif not reusable:
+            if promoting:
+                # Rank promotion is rare and the shapes change underneath, so
+                # take the slow, obviously-correct route and rebuild.
+                self.index_keys = mx.concatenate([self.index_keys, keys], axis=1)
+                self.index_position_ids = _append_indexer_positions(
+                    self.index_position_ids, position_ids
+                )
+                self._index_buffer = None
+                self._index_positions_buffer = None
+                self._index_view = None
+                self._index_positions_view = None
+                self.index_offset = int(self.index_keys.shape[1])
+                return self.index_keys, self.index_position_ids
+            self._grow_indexer(keys, position_ids, end, seed=True)
+
+        self._index_buffer[:, self.index_offset : end] = keys
+        self._index_positions_buffer[..., self.index_offset : end] = position_ids
+        self.index_offset = end
+        self._index_view = self._index_buffer[:, :end]
+        self._index_positions_view = self._index_positions_buffer[..., :end]
+        self.index_keys = self._index_view
+        self.index_position_ids = self._index_positions_view
         return self.index_keys, self.index_position_ids
+
+    def _grow_indexer(self, keys, position_ids, end: int, *, seed: bool = False):
+        """(Re)allocate the indexer buffers with room for *end* columns."""
+        capacity = ((end + self.index_step - 1) // self.index_step) * self.index_step
+        buffer = mx.zeros(
+            (keys.shape[0], capacity, keys.shape[-1]), dtype=keys.dtype
+        )
+        if position_ids.ndim == 3:
+            position_shape = (position_ids.shape[0], position_ids.shape[1], capacity)
+        else:
+            position_shape = (position_ids.shape[0], capacity)
+        positions = mx.zeros(position_shape, dtype=position_ids.dtype)
+        held = self.index_offset if seed else 0
+        if held:
+            buffer[:, :held] = self.index_keys[:, :held]
+            positions[..., :held] = self.index_position_ids[..., :held]
+        self._index_buffer = buffer
+        self._index_positions_buffer = positions
 
     def prepare(self, **kwargs):
         self.kv_cache.prepare(**kwargs)
@@ -622,6 +805,9 @@ class BatchQSAKVCache:
     def finalize(self):
         right_padding = getattr(self.kv_cache, "_right_padding", None)
         self.kv_cache.finalize()
+        # The roll below moves every column, and the padding with it, so every
+        # pooled slot's phase changes. Nothing in the bank survives that.
+        self._invalidate_pooled_slots()
         if right_padding is None or self.index_keys is None:
             return
         self.index_keys = dynamic_roll(self.index_keys, right_padding, axis=1)
@@ -639,6 +825,7 @@ class BatchQSAKVCache:
 
     def filter(self, batch_indices):
         min_left = int(self.left_padding[batch_indices].min().item())
+        self._invalidate_pooled_slots()
         self.kv_cache.filter(batch_indices)
         if self.index_keys is None:
             return
@@ -759,6 +946,7 @@ class BatchQSAKVCache:
         )
 
         self.kv_cache.extend(other.kv_cache)
+        self._invalidate_pooled_slots()
         self.index_keys = index_keys
         self.index_position_ids = index_position_ids
         self.index_offset = target
@@ -878,6 +1066,11 @@ class BatchQSAKVCache:
     def trim(self, n):
         trimmed = self.kv_cache.trim(n)
         self.index_offset = max(0, self.index_offset - trimmed)
+        if trimmed:
+            # A trim moves the width backwards, so the last settled slots are
+            # no longer settled. Dropping the bank is the safe move and a trim
+            # is rare next to a decode step.
+            self._invalidate_pooled_slots()
         # Slice the physical arrays like the singleton trim does:
         # update_indexer concatenates onto them and re-derives index_offset
         # from shape[1], so stale draft columns would otherwise fossilize
@@ -1007,6 +1200,33 @@ _EAGER_DISPATCH_MAX_ROWS = 64
 _GATHERED_VERIFY_DISABLED = os.environ.get(
     "TITAN_QWEN4_QSA_GATHERED_VERIFY", "1"
 ).strip().lower() in {"0", "false", "no", "off"}
+
+
+def _gather_min_context(token_budget: int, width: int = 1) -> int:
+    """Cache length from which a gathered arm beats the dense masked one.
+
+    The vendored gate is the QSA token budget: past 2048 entries there are more
+    complete blocks than the indexer may select, so selection has something to
+    remove and the gathered arm becomes *legal*. Legal is not the same as
+    cheaper. The gathered arm reads a fixed 2,051 rows whatever the context, so
+    its cost is flat, while the dense arm's is linear -- and at 2048 the dense
+    arm is still reading less than the gathered one, plus the gathered arm pays
+    for selection. Measured per QSA layer at the checkpoint's head shapes
+    (``engine/patches/round3/qsa-batched/REPORT.md`` section 3): at 2052 the
+    gathered arm costs 1.07x the dense one at width 1 and 1.54x at width 4, the
+    two draw at 8192 at width 1, and past that the gathered arm wins
+    everywhere.
+
+    So the crossover is a separate number from the legality bound, and the
+    route carries it. Clamped up to the budget, because below the budget the
+    gathered arm is not merely slower, it has nothing to select.
+    """
+    route = (
+        "qsa_gather_min_context"
+        if width <= 1
+        else "qsa_gather_min_context_verify"
+    )
+    return max(int(token_budget), int(_titan_route(route)))
 
 
 class Qwen4ExpRMSNorm(nn.Module):
@@ -1171,7 +1391,19 @@ class Qwen4ExpQSAIndexer(nn.Module):
         batch, seq_len, _ = qk.shape
         past_len = cache.offset if cache is not None else 0
         if position_ids is None:
-            position_ids = self._default_position_ids(batch, past_len, seq_len)
+            if isinstance(past_len, mx.array) and past_len.ndim > 0:
+                # A batched cache's offset is one logical length per row, and
+                # ``mx.arange`` does not take an array. Building the positions
+                # row-wise is what ``Qwen3_5Attention`` already does for the
+                # same case; here it used to raise a ``TypeError``, so a decode
+                # of two or more sequences through a QSA layer died on the
+                # dense path rather than being merely slow.
+                starts = mx.maximum(past_len[:batch], 0)
+                position_ids = (
+                    starts[:, None] + mx.arange(seq_len, dtype=mx.int32)[None, :]
+                )
+            else:
+                position_ids = self._default_position_ids(batch, past_len, seq_len)
 
         qk = qk.reshape(batch, seq_len, self.n_heads + self.kv_heads, self.head_dim)
         query = qk[:, :, : self.n_heads]
@@ -1333,6 +1565,22 @@ class Qwen4ExpAttention(Qwen3_5Attention):
         """
 
         causal_mask = mask is None or (isinstance(mask, str) and mask == "causal")
+        # A one-row forward that asks for a hidden state carries
+        # ``target_verify`` on every layer -- ``LanguageModel.__call__`` sets
+        # ``capture_layer_ids=[]`` for ``return_hidden``, and the Gated
+        # DeltaNet needs that to capture the intermediates a rollback replays
+        # from. The flag says nothing about attention, which has no
+        # intermediates to capture, but it used to disqualify this arm, so the
+        # depth-0 speculative cycle and every ``decode(want_hidden=True)`` fell
+        # to the dense masked path and read the whole cache: 2.8 ms a forward
+        # at 64k against 1.4 (round3/qsa-verify REPORT section 2). At one row
+        # the projections are the same call either way -- ``target_verify``
+        # short-circuits a quantised projection at batch one, and every
+        # attention projection on this checkpoint is quantised -- so the only
+        # difference is which attention arm runs, and those agree to a bf16
+        # ULP.
+        if target_verify and not _titan_route("qsa_sparse_singleton_verify"):
+            return False
         if not (
             x.ndim == 3
             and x.shape[:2] == (1, 1)
@@ -1340,7 +1588,6 @@ class Qwen4ExpAttention(Qwen3_5Attention):
             and type(cache) is QSAKVCache
             and isinstance(cache.offset, int)
             and position_embeddings is None
-            and not target_verify
             and (
                 position_ids is None
                 or (
@@ -1364,7 +1611,11 @@ class Qwen4ExpAttention(Qwen3_5Attention):
                 return False
 
         prospective_blocks = (cache.offset + 1) // self.indexer.compress_ratio
-        return prospective_blocks > self.indexer.block_topk
+        if prospective_blocks <= self.indexer.block_topk:
+            return False
+        return cache.offset + 1 > _gather_min_context(
+            self.indexer.token_budget, 1
+        )
 
     def _gathered_text_verify_eligible(
         self,
@@ -1400,7 +1651,13 @@ class Qwen4ExpAttention(Qwen3_5Attention):
                 or cache.index_position_ids.shape[-1] != cache.offset
             ):
                 return False
-        return cache.offset + x.shape[1] > self.indexer.token_budget
+        # The crossover, not the legality bound: see ``_gather_min_context``.
+        # Prefill keeps the budget gate, because a 2048-row chunk on the dense
+        # path builds a 2048 x N mask and the crossover was measured at verify
+        # widths, not at chunk widths.
+        return cache.offset + x.shape[1] > _gather_min_context(
+            self.indexer.token_budget, x.shape[1]
+        )
 
     def _gathered_text_prefill(
         self,
@@ -1578,6 +1835,167 @@ class Qwen4ExpAttention(Qwen3_5Attention):
         output = output.reshape(batch, length, -1)
         return self.o_proj(output * mx.sigmoid(gate))
 
+    def _batched_sparse_eligible(
+        self,
+        x: mx.array,
+        mask: Optional[mx.array],
+        cache: Optional[Any],
+        position_ids: Optional[mx.array],
+        position_embeddings: Optional[tuple[mx.array, mx.array]],
+    ) -> bool:
+        """Fail closed outside batched text decode and batched verify.
+
+        A joined batch converts every row's cache through ``to_batch`` into a
+        ``BatchQSAKVCache``, which fails the ``type(cache) is QSAKVCache`` test
+        the three singleton arms share. All three drop out, the left-padded
+        decode path discards the QSA mask outright, and every row reads the
+        whole cache. This is the predicate that gives those rows a sparse arm
+        back.
+
+        The test is a new one rather than a relaxation of the singleton tests,
+        which is deliberate: the singleton arms read ``cache.offset`` as an int
+        and a batched cache's offset is a per-row array.
+        """
+        if not _titan_route("qsa_batched_sparse"):
+            return False
+        if not isinstance(cache, BatchQSAKVCache):
+            return False
+        if _titan_op("qsa.gathered_batched") is None:
+            return False
+        causal_mask = (
+            mask is None
+            or (isinstance(mask, str) and mask in ("causal", "left_padded_decode"))
+        )
+        if not (
+            x.ndim == 3
+            and x.shape[1] >= 1
+            and causal_mask
+            and position_embeddings is None
+            and position_ids is None
+            and cache.index_keys is not None
+            and cache.index_position_ids is not None
+        ):
+            return False
+        width = int(cache.index_offset)
+        if width != int(cache.kv_cache.size()):
+            # A restored or foreign cache whose indexer state is not aligned
+            # with its K/V. The arm cannot discover that after it has appended
+            # this step's rows, so it declines before it starts.
+            return False
+        if x.shape[0] != int(cache.index_keys.shape[0]):
+            return False
+        # Every row has to clear the crossover, not just the longest: a short
+        # row on the gathered arm pays selection for a cache it could have read
+        # whole. ``offset`` is the per-row logical length and is an array, so
+        # this is a device read; it is one scalar a step against twelve layers
+        # of attention, and the arm below would read it anyway.
+        shortest = int(mx.min(cache.offset).item())
+        if shortest + x.shape[1] <= _gather_min_context(
+            self.indexer.token_budget, x.shape[1]
+        ):
+            return False
+        geometry = cache.slot_geometry(self.indexer.compress_ratio)
+        return geometry.slots > self.indexer.block_topk
+
+    def _batched_sparse_qsa(
+        self,
+        x: mx.array,
+        cache: "BatchQSAKVCache",
+        target_verify: bool = False,
+    ) -> mx.array:
+        """Project the batch once, append both caches, attend the selected K/V.
+
+        The batched twin of :meth:`_gathered_text_prefill`. Projections, RoPE
+        and ``o_proj`` stay batched; what changes is that selection runs in the
+        bank's phased slot space, so the block a row picks maps straight onto
+        that row's physical columns with no per-row reindexing.
+        """
+        batch, length, _ = x.shape
+        indexer = self.indexer
+
+        q_proj_output, keys, values = _target_verify_linears(
+            (self.q_proj, self.k_proj, self.v_proj),
+            x,
+            target_verify,
+        )
+        queries, gate = mx.split(
+            q_proj_output.reshape(batch, length, self.num_attention_heads, -1),
+            2,
+            axis=-1,
+        )
+        gate = gate.reshape(batch, length, -1)
+        queries = self.q_norm(queries).transpose(0, 2, 1, 3)
+        keys = self.k_norm(
+            keys.reshape(batch, length, self.num_key_value_heads, self.head_dim)
+        ).transpose(0, 2, 1, 3)
+        values = values.reshape(
+            batch, length, self.num_key_value_heads, self.head_dim
+        ).transpose(0, 2, 1, 3)
+
+        # Per-row positions, built exactly as the dense batched path builds
+        # them (``Qwen3_5Attention.__call__``): the cache's offset is each
+        # row's own logical length, so a padded row is not given the batch's
+        # width as its position.
+        offsets = mx.maximum(cache.offset[:batch], 0)
+        text_position_ids = offsets[:, None] + mx.arange(length)[None, :]
+        rotary_position_ids = mx.broadcast_to(
+            text_position_ids[None], (3, batch, length)
+        )
+        queries, keys = self.rotary_emb.apply_rotary(
+            queries,
+            keys,
+            rotary_position_ids,
+            unsqueeze_dim=1,
+        )
+        keys, values = cache.update_and_fetch(keys, values)
+
+        projected = _target_verify_linear(
+            indexer.index_qk_proj, x, target_verify
+        ).reshape(
+            batch,
+            length,
+            indexer.n_heads + indexer.kv_heads,
+            indexer.head_dim,
+        )
+        index_queries = indexer.q_layernorm(
+            projected[:, :, : indexer.n_heads]
+        ).transpose(0, 2, 1, 3)
+        raw_index_keys = projected[:, :, indexer.n_heads :].squeeze(2)
+        cache.update_indexer(raw_index_keys, text_position_ids)
+        index_queries = indexer._apply_rope(
+            index_queries,
+            text_position_ids,
+        ).transpose(0, 2, 1, 3)
+
+        geometry = cache.slot_geometry(indexer.compress_ratio)
+        pooled_index_keys = cache.pooled_index_slots(
+            geometry,
+            indexer.k_layernorm,
+            indexer._apply_rope,
+            cache_tag=indexer,
+        )
+        config = _titan_qsa_config(
+            num_query_heads=self.num_attention_heads,
+            num_key_value_heads=self.num_key_value_heads,
+            head_dim=self.head_dim,
+            indexer_head_dim=indexer.head_dim,
+            compress_ratio=indexer.compress_ratio,
+            token_budget=indexer.token_budget,
+        )
+        output = _titan_op("qsa.gathered_batched")(
+            queries,
+            keys,
+            values,
+            index_queries,
+            pooled_index_keys,
+            geometry,
+            config,
+        )
+        output = output.reshape(batch, length, -1)
+        return _target_verify_linear(
+            self.o_proj, output * mx.sigmoid(gate), target_verify
+        )
+
     def __call__(
         self,
         x: mx.array,
@@ -1620,6 +2038,15 @@ class Qwen4ExpAttention(Qwen3_5Attention):
             return self._gathered_text_prefill(
                 x, cache, position_ids, target_verify=True
             )
+
+        if self._batched_sparse_eligible(
+            x,
+            mask,
+            cache,
+            position_ids,
+            position_embeddings,
+        ):
+            return self._batched_sparse_qsa(x, cache, target_verify=target_verify)
 
         if cache is not None and x.ndim == 3 and x.shape[1] > 1:
             cache._titan_last_prefill_gathered = False

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -40,12 +41,12 @@ ADAPTER_OPS: dict[str, str | None] = {
     "hc.prefill_block_fused": "hc_prefill",
     "ple.packed_rows_lookup": "ple_packed_lookup",
     "sample.fast_topk": "topk_radix",
-    # The batched gathered-QSA arm. The kernel exists
-    # (``qsa_gathered_attention``) but it replaces the whole attention block
-    # and needs the pooled index bank in phased slot space, which the vendored
-    # attention does not build. Wiring it is the one remaining hook; until
-    # then batched decode takes the dense path and is merely slow, not wrong.
-    "qsa.gathered_batched": None,
+    # The batched gathered-QSA arm. Wired: ``Qwen4ExpAttention`` builds the
+    # pooled index bank in phased slot space on the ``BatchQSAKVCache`` and
+    # calls this for batched decode and batched verify. ``None`` here (which
+    # ``kernels.reference_only`` and ``kernels.disabled`` both produce) sends
+    # batched rows back to the dense masked path.
+    "qsa.gathered_batched": "qsa_gathered_attention",
     # The narrow per-kernel seams inside qsa_fast.py. oMLX filled these from
     # its own extension; Titan has no equivalent yet, so they stay on MLX.
     "qsa.indexer_scores": None,
@@ -69,7 +70,19 @@ _build_failed = False
 
 
 def _get_registry() -> Any:
-    """Build the registry once. A failure is remembered, not retried per call."""
+    """The process's configured registry, or a default one, built once.
+
+    ``titan.config.wiring`` builds a registry from the ``kernels`` section at
+    startup and publishes it (``titan.kernels.registry.set_current``). It never
+    reached here before, so ``kernels.reference_only`` and ``kernels.disabled``
+    changed nothing inside the forward: the adapter built its own registry with
+    default settings and used every fast path regardless. That made the control
+    arm of a kernel A/B not a control, which is the arm INCIDENTS rule 2 asks
+    for by name. Preferring the published one fixes it without the adapter
+    having to be handed anything.
+
+    A failure is remembered, not retried per call.
+    """
     global _registry, _build_failed
     if _registry is not None or _build_failed:
         return _registry
@@ -79,7 +92,7 @@ def _get_registry() -> Any:
         try:
             from titan.kernels import registry as registry_module
 
-            _registry = registry_module.build_registry()
+            _registry = registry_module.current() or registry_module.build_registry()
         except Exception as exc:  # noqa: BLE001 - the adapter runs without it
             _build_failed = True
             logger.info(
@@ -127,7 +140,17 @@ def get(name: str) -> Optional[Callable[..., Any]]:
             op = None
         else:
             try:
-                op = registry.resolve(registry_name)
+                # A configuration that turned this op off means "this site has
+                # no kernel", not "this site runs the op's reference". The two
+                # differ: the reference is the registry's own MLX call
+                # sequence, which for the gathered-QSA op is still the sparse
+                # algorithm, while the stock path is what the vendored code
+                # does without any kernel at all. ``kernels.reference_only``
+                # asks for the second, so that is what ``None`` here gives.
+                if registry.fast_disabled(registry_name):
+                    op = None
+                else:
+                    op = registry.resolve(registry_name)
             except Exception as exc:  # noqa: BLE001 - a missing op is normal
                 logger.debug("op %s unavailable: %s", registry_name, exc)
                 op = None
@@ -250,3 +273,137 @@ def _open_pack(prefix: str, model_path):
                                layer_id, exc)
                 return None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Arm routing
+# ---------------------------------------------------------------------------
+#
+# Which *arm* of the vendored attention a call takes is not the same question
+# as which kernel is behind an op, and it needs its own switch: the arms differ
+# in cost by several milliseconds a step at 64k and by about one bf16 ULP in
+# the last bits, so a bench has to be able to pair them and a regression has to
+# be bisectable.
+#
+# ``models/forward_paths.py`` is the switchboard for the arms that were already
+# there. These three are new this round and live here instead, because
+# ``forward_paths`` belongs to another workstream's files and this module is
+# already the adapter's one door for "which accelerated path does this site
+# take". They should be folded into ``forward_paths`` by whoever owns it next.
+#
+# No environment variables, same as ``forward_paths``: a route is a name with a
+# default and a docstring line, and changing one is a function call.
+
+#: name -> default value.
+ROUTES: dict[str, Any] = {
+    "qsa_sparse_singleton_verify": True,
+    "qsa_batched_sparse": True,
+    "qsa_gather_min_context": 8192,
+    "qsa_gather_min_context_verify": 4096,
+}
+
+ROUTE_DESCRIPTIONS: dict[str, str] = {
+    "qsa_sparse_singleton_verify": (
+        "Route a one-row target-verify forward (the depth-0 speculative cycle, "
+        "and any decode that asks for a hidden state) through the gathered "
+        "sparse decode arm. Off leaves it on the dense masked path, which "
+        "reads the whole cache: 2.8 ms a forward at 64k against 1.4."
+    ),
+    "qsa_batched_sparse": (
+        "Give a BatchQSAKVCache the gathered sparse arm, through the "
+        "``qsa.gathered_batched`` registry op. Off leaves batched decode and "
+        "batched verify on the dense path, where every row reads the whole "
+        "cache and the QSA mask is discarded outright when rows are padded."
+    ),
+    "qsa_gather_min_context": (
+        "Context length from which a one-row forward prefers the gathered arm "
+        "to the dense masked one. The vendored gate is the QSA token budget, "
+        "2048, which is where selection becomes *legal* rather than where it "
+        "becomes cheaper: the gathered arm reads a flat 2,051 rows whatever "
+        "the context, so at 2048 it is reading more than the dense arm and "
+        "paying for selection on top. Clamped up to the budget by the caller."
+    ),
+    "qsa_gather_min_context_verify": (
+        "The same, for a block wider than one row. It is lower because the "
+        "dense arm's cost rises with the width and the gathered arm's barely "
+        "does: measured per QSA layer on the real-shapes synthetic, width 4 "
+        "crosses over near 4096 and width 1 not until 8192."
+    ),
+}
+
+_routes: dict[str, Any] = dict(ROUTES)
+
+
+def _check_route(name: str) -> str:
+    if name not in ROUTES:
+        raise KeyError(
+            f"no such route {name!r}; known: {', '.join(sorted(ROUTES))}"
+        )
+    return name
+
+
+def route(name: str) -> Any:
+    """The current value of a route. The hot-path read, so it stays a lookup."""
+    return _routes[_check_route(name)]
+
+
+def set_routes(**values: Any) -> dict[str, Any]:
+    """Set several routes at once. Returns the values they had before."""
+    with _lock:
+        previous = {}
+        for name, value in values.items():
+            previous[_check_route(name)] = _routes[name]
+            _routes[name] = value
+        return previous
+
+
+def routes() -> dict[str, Any]:
+    """What is set right now. For a bench header or a resolved-config dump."""
+    return dict(_routes)
+
+
+def reset_routes() -> None:
+    with _lock:
+        _routes.clear()
+        _routes.update(ROUTES)
+
+
+@contextmanager
+def overridden(**values: Any):
+    """Scope a set of routes to a block, restoring the old values after."""
+    previous = set_routes(**values)
+    try:
+        yield routes()
+    finally:
+        set_routes(**previous)
+
+
+# ---------------------------------------------------------------------------
+# The gathered-QSA value objects
+# ---------------------------------------------------------------------------
+#
+# ``qsa_gathered_attention`` takes the head geometry and the batch's padding as
+# value objects rather than reading them off a cache, which is what keeps the
+# op free of the model. The vendored attention builds them here so it does not
+# import ``titan.kernels`` itself; the door stays one module wide.
+
+
+def qsa_config(**fields: Any):
+    """A :class:`titan.kernels.qsa_gathered_attention.QSAConfig`."""
+    from titan.kernels.qsa_gathered_attention import QSAConfig
+
+    return QSAConfig(**fields)
+
+
+def qsa_geometry(width: int, pads, compress_ratio: int):
+    """A :class:`titan.kernels.qsa_gathered_attention.QSAGeometry`."""
+    from titan.kernels.qsa_gathered_attention import QSAGeometry
+
+    return QSAGeometry(width, pads, compress_ratio)
+
+
+def qsa_pool_slots(*args: Any, **kwargs: Any):
+    """``qsa_gathered_attention.pool_slots``: fresh slots of the phased bank."""
+    from titan.kernels.qsa_gathered_attention import pool_slots
+
+    return pool_slots(*args, **kwargs)

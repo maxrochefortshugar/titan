@@ -1,0 +1,2180 @@
+[
+  {
+    "width": 1,
+    "arm": "decode",
+    "want_hidden": false,
+    "step_ms": 3.7466250000761647,
+    "build_ms": 2.060270999891145,
+    "gpu_tail_ms": 1.6863540001850197,
+    "sync_step_ms": 18.027645999950437,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.2057836000176394,
+        "gpu_ms": 1.8041286999505246,
+        "build_inclusive_ms": 0.2057836000176394,
+        "sync_inclusive_ms": 2.009912299968164
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.22788849994412885,
+        "gpu_ms": 5.056036999985736,
+        "build_inclusive_ms": 0.22788849994412885,
+        "sync_inclusive_ms": 5.283925499929865
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02504680005586124,
+        "gpu_ms": 3.092765400083408,
+        "build_inclusive_ms": 0.02504680005586124,
+        "sync_inclusive_ms": 3.1178122001392694
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.000716600015948643,
+        "gpu_ms": 0.21023329998115514,
+        "build_inclusive_ms": 0.000716600015948643,
+        "sync_inclusive_ms": 0.21094989999710378
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10589959999833809,
+        "gpu_ms": 1.741570899935141,
+        "build_inclusive_ms": 0.18285009996361623,
+        "sync_inclusive_ms": 5.852479299960578
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04532919995199336,
+        "gpu_ms": 2.349995999975363,
+        "build_inclusive_ms": 0.04532919995199336,
+        "sync_inclusive_ms": 2.395325199927356
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.03162130001328478,
+        "gpu_ms": 1.578062300086458,
+        "build_inclusive_ms": 0.03162130001328478,
+        "sync_inclusive_ms": 1.6096836000997428
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.023870799986980273,
+        "gpu_ms": 0.049437800112173136,
+        "build_inclusive_ms": 0.09591250000084983,
+        "sync_inclusive_ms": 1.201470900014101
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.017238000032193668,
+        "gpu_ms": 0.05393269987052918,
+        "build_inclusive_ms": 0.027729399994314008,
+        "sync_inclusive_ms": 0.47959149990219885
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.04431230001955555,
+        "gpu_ms": 0.6042584999931933,
+        "build_inclusive_ms": 0.04431230001955555,
+        "sync_inclusive_ms": 0.6485708000127488
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.01049139996212034,
+        "gpu_ms": 0.39792940003735566,
+        "build_inclusive_ms": 0.01049139996212034,
+        "sync_inclusive_ms": 0.408420799999476
+      }
+    ],
+    "context": 600,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 1,
+    "arm": "decode-hidden",
+    "want_hidden": true,
+    "step_ms": 3.799124500119433,
+    "build_ms": 2.052750500070033,
+    "gpu_tail_ms": 1.7463740000494,
+    "sync_step_ms": 18.033083500085922,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.20685800000137533,
+        "gpu_ms": 1.8364420001034887,
+        "build_inclusive_ms": 0.20685800000137533,
+        "sync_inclusive_ms": 2.043300000104864
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.23308800018639886,
+        "gpu_ms": 4.9856826996574455,
+        "build_inclusive_ms": 0.23308800018639886,
+        "sync_inclusive_ms": 5.218770699843844
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.025687799870866,
+        "gpu_ms": 3.0949537999731547,
+        "build_inclusive_ms": 0.025687799870866,
+        "sync_inclusive_ms": 3.1206415998440207
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0007498999593735789,
+        "gpu_ms": 0.21218330009560304,
+        "build_inclusive_ms": 0.0007498999593735789,
+        "sync_inclusive_ms": 0.21293320005497662
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10541670017119031,
+        "gpu_ms": 1.732992299594116,
+        "build_inclusive_ms": 0.18755910007257626,
+        "sync_inclusive_ms": 5.878783799971643
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.049633300000095915,
+        "gpu_ms": 2.3373916001901307,
+        "build_inclusive_ms": 0.049633300000095915,
+        "sync_inclusive_ms": 2.3870249001902266
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.03250909990129003,
+        "gpu_ms": 1.62084080011482,
+        "build_inclusive_ms": 0.03250909990129003,
+        "sync_inclusive_ms": 1.65334990001611
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.022128699947643327,
+        "gpu_ms": 0.0446254001417401,
+        "build_inclusive_ms": 0.09556670001984457,
+        "sync_inclusive_ms": 1.1752831000421793
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.01697539996712294,
+        "gpu_ms": 0.04833289997350221,
+        "build_inclusive_ms": 0.026729599971986318,
+        "sync_inclusive_ms": 0.46127909995448135
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.04670840010021493,
+        "gpu_ms": 0.6005414998980996,
+        "build_inclusive_ms": 0.04670840010021493,
+        "sync_inclusive_ms": 0.6472498999983145
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009754200004863378,
+        "gpu_ms": 0.3862166000089928,
+        "build_inclusive_ms": 0.009754200004863378,
+        "sync_inclusive_ms": 0.3959708000138562
+      }
+    ],
+    "context": 600,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 4,
+    "arm": "verify",
+    "want_hidden": true,
+    "step_ms": 5.224312499990447,
+    "build_ms": 2.242124999952466,
+    "gpu_tail_ms": 2.9821875000379805,
+    "sync_step_ms": 19.89170899992132,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.18360009999014437,
+        "gpu_ms": 2.209479100065437,
+        "build_inclusive_ms": 0.18360009999014437,
+        "sync_inclusive_ms": 2.393079200055581
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.23289980008485145,
+        "gpu_ms": 4.9677583999027775,
+        "build_inclusive_ms": 0.23289980008485145,
+        "sync_inclusive_ms": 5.200658199987629
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02392909996160597,
+        "gpu_ms": 3.110828800026866,
+        "build_inclusive_ms": 0.02392909996160597,
+        "sync_inclusive_ms": 3.1347578999884718
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0009333999742011656,
+        "gpu_ms": 0.20937910007887695,
+        "build_inclusive_ms": 0.0009333999742011656,
+        "sync_inclusive_ms": 0.2103125000530781
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10348350001549989,
+        "gpu_ms": 1.7885836996583748,
+        "build_inclusive_ms": 0.1937253000733108,
+        "sync_inclusive_ms": 7.229512599951704
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04616249989339849,
+        "gpu_ms": 3.5468667002760412,
+        "build_inclusive_ms": 0.04616249989339849,
+        "sync_inclusive_ms": 3.5930292001694397
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.044079300164412416,
+        "gpu_ms": 1.7003368999439772,
+        "build_inclusive_ms": 0.044079300164412416,
+        "sync_inclusive_ms": 1.7444162001083896
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.02206680001108907,
+        "gpu_ms": 0.044737599887412216,
+        "build_inclusive_ms": 0.10927929999979824,
+        "sync_inclusive_ms": 1.3823583999283073
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.01800030004233122,
+        "gpu_ms": 0.051745699920502375,
+        "build_inclusive_ms": 0.027637599987428985,
+        "sync_inclusive_ms": 0.4718791999948735
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.059574900001280184,
+        "gpu_ms": 0.7840999000336524,
+        "build_inclusive_ms": 0.059574900001280184,
+        "sync_inclusive_ms": 0.8436748000349326
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009637299945097766,
+        "gpu_ms": 0.39249590008694213,
+        "build_inclusive_ms": 0.009637299945097766,
+        "sync_inclusive_ms": 0.4021332000320399
+      }
+    ],
+    "context": 600,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "context": 600,
+    "elimination": {
+      "default|w1|plain": 3.708416499989653,
+      "default|w1|hidden": 3.750187500031643,
+      "default|w4|hidden": 5.169583499991859,
+      "dense-qsa|w1|plain": 3.717666500051564,
+      "dense-qsa|w1|hidden": 3.772728999933861,
+      "dense-qsa|w4|hidden": 5.184666500099411,
+      "no-singleton-verify|w1|plain": 3.7036045000604645,
+      "no-singleton-verify|w1|hidden": 3.747979500076326,
+      "no-singleton-verify|w4|hidden": 5.145957999957318
+    }
+  },
+  {
+    "width": 1,
+    "arm": "decode",
+    "want_hidden": false,
+    "step_ms": 3.9314995000268027,
+    "build_ms": 2.3570410000957054,
+    "gpu_tail_ms": 1.5744584999310973,
+    "sync_step_ms": 18.426812500024425,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.20114589997319854,
+        "gpu_ms": 1.7918168000278456,
+        "build_inclusive_ms": 0.20114589997319854,
+        "sync_inclusive_ms": 1.9929627000010441
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.21988750004311441,
+        "gpu_ms": 4.988479699932213,
+        "build_inclusive_ms": 0.21988750004311441,
+        "sync_inclusive_ms": 5.208367199975328
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02479490001405793,
+        "gpu_ms": 2.969192600016868,
+        "build_inclusive_ms": 0.02479490001405793,
+        "sync_inclusive_ms": 2.9939875000309257
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0005876000159332762,
+        "gpu_ms": 0.20324549993802066,
+        "build_inclusive_ms": 0.0005876000159332762,
+        "sync_inclusive_ms": 0.20383309995395393
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10662469974249689,
+        "gpu_ms": 1.704359400082467,
+        "build_inclusive_ms": 0.186991600003239,
+        "sync_inclusive_ms": 5.80779229997006
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04870000011578668,
+        "gpu_ms": 2.334662300063428,
+        "build_inclusive_ms": 0.04870000011578668,
+        "sync_inclusive_ms": 2.383362300179215
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.031666900144955434,
+        "gpu_ms": 1.5817789998209264,
+        "build_inclusive_ms": 0.031666900144955434,
+        "sync_inclusive_ms": 1.6134458999658818
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.02446619987495069,
+        "gpu_ms": 0.046183900235519104,
+        "build_inclusive_ms": 0.14763299996047863,
+        "sync_inclusive_ms": 1.888808300054734
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.07160019999901124,
+        "gpu_ms": 0.5719791998899382,
+        "build_inclusive_ms": 0.08421260001796327,
+        "sync_inclusive_ms": 1.1259540999390083
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.03895420006756467,
+        "gpu_ms": 0.6532498999376912,
+        "build_inclusive_ms": 0.03895420006756467,
+        "sync_inclusive_ms": 0.6922041000052559
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002566399962233845,
+        "gpu_ms": 0.08135439998113725,
+        "build_inclusive_ms": 0.002566399962233845,
+        "sync_inclusive_ms": 0.0839207999433711
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.010046000056718185,
+        "gpu_ms": 0.3884079000499696,
+        "build_inclusive_ms": 0.010046000056718185,
+        "sync_inclusive_ms": 0.3984539001066878
+      }
+    ],
+    "context": 2052,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 1,
+    "arm": "decode-hidden",
+    "want_hidden": true,
+    "step_ms": 3.984291500046311,
+    "build_ms": 2.2722080000221467,
+    "gpu_tail_ms": 1.712083500024164,
+    "sync_step_ms": 18.665416999851914,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.2021751000711447,
+        "gpu_ms": 1.8343540000614666,
+        "build_inclusive_ms": 0.2021751000711447,
+        "sync_inclusive_ms": 2.0365291001326113
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2268330000106289,
+        "gpu_ms": 5.046299200103022,
+        "build_inclusive_ms": 0.2268330000106289,
+        "sync_inclusive_ms": 5.2731322001136505
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.0240247999499843,
+        "gpu_ms": 3.014842500101622,
+        "build_inclusive_ms": 0.0240247999499843,
+        "sync_inclusive_ms": 3.0388673000516064
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0006833999805166968,
+        "gpu_ms": 0.20387039999150147,
+        "build_inclusive_ms": 0.0006833999805166968,
+        "sync_inclusive_ms": 0.20455379997201817
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10375850008585985,
+        "gpu_ms": 1.7353572998217714,
+        "build_inclusive_ms": 0.1813210000136678,
+        "sync_inclusive_ms": 5.902099199806798
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04538339985629136,
+        "gpu_ms": 2.392232900115232,
+        "build_inclusive_ms": 0.04538339985629136,
+        "sync_inclusive_ms": 2.4376162999715234
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.032179100071516586,
+        "gpu_ms": 1.5931879998561271,
+        "build_inclusive_ms": 0.032179100071516586,
+        "sync_inclusive_ms": 1.6253670999276437
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.02388350008004636,
+        "gpu_ms": 0.04862049997882423,
+        "build_inclusive_ms": 0.1471085000275707,
+        "sync_inclusive_ms": 1.906525099980172
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.07183299996995629,
+        "gpu_ms": 0.5614545001208171,
+        "build_inclusive_ms": 0.084395799945014,
+        "sync_inclusive_ms": 1.1106251000001066
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.03882920000251033,
+        "gpu_ms": 0.6845667999186844,
+        "build_inclusive_ms": 0.03882920000251033,
+        "sync_inclusive_ms": 0.7233959999211947
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002450299962220015,
+        "gpu_ms": 0.08176639998964674,
+        "build_inclusive_ms": 0.002450299962220015,
+        "sync_inclusive_ms": 0.08421669995186676
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.0101125000128377,
+        "gpu_ms": 0.38300839994462876,
+        "build_inclusive_ms": 0.0101125000128377,
+        "sync_inclusive_ms": 0.39312089995746646
+      }
+    ],
+    "context": 2052,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 4,
+    "arm": "verify",
+    "want_hidden": true,
+    "step_ms": 5.467895500032682,
+    "build_ms": 2.5367289999849163,
+    "gpu_tail_ms": 2.931166500047766,
+    "sync_step_ms": 21.45087550002245,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.188979100130382,
+        "gpu_ms": 2.2239462999550597,
+        "build_inclusive_ms": 0.188979100130382,
+        "sync_inclusive_ms": 2.4129254000854417
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.24600850015303877,
+        "gpu_ms": 5.006974600041758,
+        "build_inclusive_ms": 0.24600850015303877,
+        "sync_inclusive_ms": 5.252983100194797
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02459880004153092,
+        "gpu_ms": 3.142680999962977,
+        "build_inclusive_ms": 0.02459880004153092,
+        "sync_inclusive_ms": 3.1672798000045077
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0010916000292127137,
+        "gpu_ms": 0.2167375999079013,
+        "build_inclusive_ms": 0.0010916000292127137,
+        "sync_inclusive_ms": 0.21782919993711403
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.1083292001112568,
+        "gpu_ms": 1.832061899517612,
+        "build_inclusive_ms": 0.20227869999871473,
+        "sync_inclusive_ms": 7.33101639987126
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04859149987623823,
+        "gpu_ms": 3.6244209002006755,
+        "build_inclusive_ms": 0.04859149987623823,
+        "sync_inclusive_ms": 3.6730124000769138
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.0453580000112197,
+        "gpu_ms": 1.6722549001542575,
+        "build_inclusive_ms": 0.0453580000112197,
+        "sync_inclusive_ms": 1.7176129001654772
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.02377119992615917,
+        "gpu_ms": 0.05074160010281048,
+        "build_inclusive_ms": 0.19447089998720912,
+        "sync_inclusive_ms": 2.6294458000165832
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.07010790004642331,
+        "gpu_ms": 0.5800882000130514,
+        "build_inclusive_ms": 0.11394980006116384,
+        "sync_inclusive_ms": 1.5095497000174873
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.05674989999988611,
+        "gpu_ms": 0.9886333999702401,
+        "build_inclusive_ms": 0.05674989999988611,
+        "sync_inclusive_ms": 1.0453832999701262
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.033183500045197434,
+        "gpu_ms": 0.4099703998917903,
+        "build_inclusive_ms": 0.033183500045197434,
+        "sync_inclusive_ms": 0.4431538999369877
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.010658399969543098,
+        "gpu_ms": 0.4055413000514818,
+        "build_inclusive_ms": 0.010658399969543098,
+        "sync_inclusive_ms": 0.4161997000210249
+      }
+    ],
+    "context": 2052,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "context": 2052,
+    "elimination": {
+      "default|w1|plain": 3.9130624999188512,
+      "default|w1|hidden": 3.9805835000379375,
+      "default|w4|hidden": 5.4298124999832,
+      "dense-qsa|w1|plain": 3.8996460000362276,
+      "dense-qsa|w1|hidden": 3.955062500040185,
+      "dense-qsa|w4|hidden": 5.447250000088388,
+      "no-singleton-verify|w1|plain": 3.906124999957683,
+      "no-singleton-verify|w1|hidden": 3.9725625000528453,
+      "no-singleton-verify|w4|hidden": 5.470791999982794
+    }
+  },
+  {
+    "width": 1,
+    "arm": "decode",
+    "want_hidden": false,
+    "step_ms": 3.904792000071211,
+    "build_ms": 2.2722295000221493,
+    "gpu_tail_ms": 1.6325625000490618,
+    "sync_step_ms": 18.482583499917382,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.203128900034244,
+        "gpu_ms": 1.7871001998628344,
+        "build_inclusive_ms": 0.203128900034244,
+        "sync_inclusive_ms": 1.9902290998970784
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2258121001887048,
+        "gpu_ms": 4.986013699863179,
+        "build_inclusive_ms": 0.2258121001887048,
+        "sync_inclusive_ms": 5.211825800051884
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.0255672998719092,
+        "gpu_ms": 3.0429320000621374,
+        "build_inclusive_ms": 0.0255672998719092,
+        "sync_inclusive_ms": 3.0684992999340466
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.000570699967283872,
+        "gpu_ms": 0.21082500002194138,
+        "build_inclusive_ms": 0.000570699967283872,
+        "sync_inclusive_ms": 0.21139569998922525
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10587900035261555,
+        "gpu_ms": 1.7097379995902884,
+        "build_inclusive_ms": 0.18588700008876913,
+        "sync_inclusive_ms": 5.809291199921063
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04752879988245695,
+        "gpu_ms": 2.3323293001567436,
+        "build_inclusive_ms": 0.04752879988245695,
+        "sync_inclusive_ms": 2.3798581000392005
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.03247919985369663,
+        "gpu_ms": 1.5813369000852617,
+        "build_inclusive_ms": 0.03247919985369663,
+        "sync_inclusive_ms": 1.6138160999389584
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.023341999963122362,
+        "gpu_ms": 0.04255770002146164,
+        "build_inclusive_ms": 0.1478919000192036,
+        "sync_inclusive_ms": 1.8728832999386213
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.07289160007530882,
+        "gpu_ms": 0.5469583999229144,
+        "build_inclusive_ms": 0.08505820001118991,
+        "sync_inclusive_ms": 1.1109041999588953
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.03949170004489133,
+        "gpu_ms": 0.6565876999502507,
+        "build_inclusive_ms": 0.03949170004489133,
+        "sync_inclusive_ms": 0.696079399995142
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002433299960102886,
+        "gpu_ms": 0.07955440003115655,
+        "build_inclusive_ms": 0.002433299960102886,
+        "sync_inclusive_ms": 0.08198769999125943
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009733299975778209,
+        "gpu_ms": 0.3993331999936345,
+        "build_inclusive_ms": 0.009733299975778209,
+        "sync_inclusive_ms": 0.4090664999694127
+      }
+    ],
+    "context": 4096,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 1,
+    "arm": "decode-hidden",
+    "want_hidden": true,
+    "step_ms": 3.944062000073245,
+    "build_ms": 2.2608955000578135,
+    "gpu_tail_ms": 1.6831665000154317,
+    "sync_step_ms": 18.603416500013736,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.19720790003248112,
+        "gpu_ms": 1.8124715998737884,
+        "build_inclusive_ms": 0.19720790003248112,
+        "sync_inclusive_ms": 2.0096794999062695
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.22622080000473943,
+        "gpu_ms": 5.0297370999714985,
+        "build_inclusive_ms": 0.22622080000473943,
+        "sync_inclusive_ms": 5.255957899976238
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.024404299915659067,
+        "gpu_ms": 3.0774504000191882,
+        "build_inclusive_ms": 0.024404299915659067,
+        "sync_inclusive_ms": 3.1018546999348473
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0007122999932107632,
+        "gpu_ms": 0.20729610000671528,
+        "build_inclusive_ms": 0.0007122999932107632,
+        "sync_inclusive_ms": 0.20800839999992604
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10681370015390712,
+        "gpu_ms": 1.7119564997528869,
+        "build_inclusive_ms": 0.18832920009117515,
+        "sync_inclusive_ms": 5.823003999989851
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04829959998460254,
+        "gpu_ms": 2.3271880000038436,
+        "build_inclusive_ms": 0.04829959998460254,
+        "sync_inclusive_ms": 2.375487599988446
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.033215899952665495,
+        "gpu_ms": 1.5955303001419452,
+        "build_inclusive_ms": 0.033215899952665495,
+        "sync_inclusive_ms": 1.6287462000946107
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.023304499927689903,
+        "gpu_ms": 0.04672860004575341,
+        "build_inclusive_ms": 0.14261669998631987,
+        "sync_inclusive_ms": 1.867358599997715
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.06746650001332455,
+        "gpu_ms": 0.5485254000404893,
+        "build_inclusive_ms": 0.07946240004912397,
+        "sync_inclusive_ms": 1.0865254999771423
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.039849800009506,
+        "gpu_ms": 0.6709502000376233,
+        "build_inclusive_ms": 0.039849800009506,
+        "sync_inclusive_ms": 0.7108000000471293
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.0026166999987253803,
+        "gpu_ms": 0.07974599996032339,
+        "build_inclusive_ms": 0.0026166999987253803,
+        "sync_inclusive_ms": 0.08236269995904877
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009379200037074042,
+        "gpu_ms": 0.3787916999272056,
+        "build_inclusive_ms": 0.009379200037074042,
+        "sync_inclusive_ms": 0.38817089996427967
+      }
+    ],
+    "context": 4096,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 4,
+    "arm": "verify",
+    "want_hidden": true,
+    "step_ms": 5.6222499998739295,
+    "build_ms": 2.4012914999502755,
+    "gpu_tail_ms": 3.220958499923654,
+    "sync_step_ms": 21.61399949989118,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.18680419996144337,
+        "gpu_ms": 2.227728999991996,
+        "build_inclusive_ms": 0.18680419996144337,
+        "sync_inclusive_ms": 2.414533199953439
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2466711001488875,
+        "gpu_ms": 5.017258199609387,
+        "build_inclusive_ms": 0.2466711001488875,
+        "sync_inclusive_ms": 5.263929299758274
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.026483099941287946,
+        "gpu_ms": 3.1427875000645145,
+        "build_inclusive_ms": 0.026483099941287946,
+        "sync_inclusive_ms": 3.1692706000058024
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.001095800030270766,
+        "gpu_ms": 0.21779559997412434,
+        "build_inclusive_ms": 0.001095800030270766,
+        "sync_inclusive_ms": 0.2188914000043951
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10843310005839157,
+        "gpu_ms": 1.8368628998587155,
+        "build_inclusive_ms": 0.20602100003088708,
+        "sync_inclusive_ms": 7.369570500031841
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.05008350003663509,
+        "gpu_ms": 3.6330705999944257,
+        "build_inclusive_ms": 0.05008350003663509,
+        "sync_inclusive_ms": 3.683154100031061
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.04750439993586042,
+        "gpu_ms": 1.6936160001478129,
+        "build_inclusive_ms": 0.04750439993586042,
+        "sync_inclusive_ms": 1.7411204000836733
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.022662600031253533,
+        "gpu_ms": 0.05553759995109431,
+        "build_inclusive_ms": 0.1850792000823276,
+        "sync_inclusive_ms": 2.812579000033111
+      },
+      {
+        "group": "qsa.arm.dense_indexer",
+        "calls": 2.0,
+        "build_ms": 0.06557460001204163,
+        "gpu_ms": 0.5834043999357164,
+        "build_inclusive_ms": 0.10849570005575515,
+        "sync_inclusive_ms": 1.5042665999544624
+      },
+      {
+        "group": "qsa.arm.dense_sdpa",
+        "calls": 2.0,
+        "build_ms": 0.053920899995318905,
+        "gpu_ms": 1.1761913001009816,
+        "build_inclusive_ms": 0.053920899995318905,
+        "sync_inclusive_ms": 1.2301122000963005
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.03315420003673353,
+        "gpu_ms": 0.4154208999580078,
+        "build_inclusive_ms": 0.03315420003673353,
+        "sync_inclusive_ms": 0.4485750999947413
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009766900006979995,
+        "gpu_ms": 0.39694560000498313,
+        "build_inclusive_ms": 0.009766900006979995,
+        "sync_inclusive_ms": 0.40671250001196313
+      }
+    ],
+    "context": 4096,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "context": 4096,
+    "elimination": {
+      "default|w1|plain": 3.913541499969142,
+      "default|w1|hidden": 3.9880204999462876,
+      "default|w4|hidden": 5.6859375000613,
+      "dense-qsa|w1|plain": 3.9289584999551153,
+      "dense-qsa|w1|hidden": 3.9827499999773863,
+      "dense-qsa|w4|hidden": 5.682353999873158,
+      "no-singleton-verify|w1|plain": 3.9348124998923595,
+      "no-singleton-verify|w1|hidden": 3.963146000046436,
+      "no-singleton-verify|w4|hidden": 5.703229499999907
+    }
+  },
+  {
+    "width": 1,
+    "arm": "decode",
+    "want_hidden": false,
+    "step_ms": 4.001979499889785,
+    "build_ms": 2.2000835000426378,
+    "gpu_tail_ms": 1.8018959998471473,
+    "sync_step_ms": 19.96085399991898,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.19646609994197206,
+        "gpu_ms": 1.8478131001302245,
+        "build_inclusive_ms": 0.19646609994197206,
+        "sync_inclusive_ms": 2.0442792000721965
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2296123000633088,
+        "gpu_ms": 5.1132120999454855,
+        "build_inclusive_ms": 0.2296123000633088,
+        "sync_inclusive_ms": 5.342824400008794
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.024582799915151554,
+        "gpu_ms": 3.083792799998264,
+        "build_inclusive_ms": 0.024582799915151554,
+        "sync_inclusive_ms": 3.1083755999134155
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0012582999943333562,
+        "gpu_ms": 0.2080542000612695,
+        "build_inclusive_ms": 0.0012582999943333562,
+        "sync_inclusive_ms": 0.20931250005560287
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.1028291998181885,
+        "gpu_ms": 1.724329599869634,
+        "build_inclusive_ms": 0.17990409990034095,
+        "sync_inclusive_ms": 5.8296536999705495
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04495850002967927,
+        "gpu_ms": 2.345537200039871,
+        "build_inclusive_ms": 0.04495850002967927,
+        "sync_inclusive_ms": 2.3904957000695504
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.03211640005247318,
+        "gpu_ms": 1.5798828001607035,
+        "build_inclusive_ms": 0.03211640005247318,
+        "sync_inclusive_ms": 1.6119992002131767
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.08935800001381722,
+        "gpu_ms": 0.4114085998708106,
+        "build_inclusive_ms": 0.14114580001205468,
+        "sync_inclusive_ms": 3.040858299982574
+      },
+      {
+        "group": "qsa.arm.gathered_decode",
+        "calls": 2.0,
+        "build_ms": 0.020024600007673143,
+        "gpu_ms": 0.0982006999947771,
+        "build_inclusive_ms": 0.040408200038655195,
+        "sync_inclusive_ms": 2.106925000020965
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.007904400013103441,
+        "gpu_ms": 0.9783539999943969,
+        "build_inclusive_ms": 0.007904400013103441,
+        "sync_inclusive_ms": 0.9862584000075003
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002091900023515336,
+        "gpu_ms": 0.0496455000302376,
+        "build_inclusive_ms": 0.002091900023515336,
+        "sync_inclusive_ms": 0.051737400053752935
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.01028749995839462,
+        "gpu_ms": 0.4110706999881586,
+        "build_inclusive_ms": 0.01028749995839462,
+        "sync_inclusive_ms": 0.4213581999465532
+      },
+      {
+        "group": "qsa.sdpa",
+        "calls": 2.0,
+        "build_ms": 0.002191700059483992,
+        "gpu_ms": 0.5788914000049772,
+        "build_inclusive_ms": 0.002191700059483992,
+        "sync_inclusive_ms": 0.5810831000644612
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009287699936066929,
+        "gpu_ms": 0.37214160008716135,
+        "build_inclusive_ms": 0.009287699936066929,
+        "sync_inclusive_ms": 0.3814293000232283
+      }
+    ],
+    "context": 8192,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 1,
+    "arm": "decode-hidden",
+    "want_hidden": true,
+    "step_ms": 4.001207999976941,
+    "build_ms": 2.212770500022998,
+    "gpu_tail_ms": 1.7884374999539432,
+    "sync_step_ms": 20.035520499959603,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.19775880000452162,
+        "gpu_ms": 1.82638680000764,
+        "build_inclusive_ms": 0.19775880000452162,
+        "sync_inclusive_ms": 2.0241456000121616
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.23191250006675546,
+        "gpu_ms": 5.077708399994663,
+        "build_inclusive_ms": 0.23191250006675546,
+        "sync_inclusive_ms": 5.309620900061418
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.025524100146867568,
+        "gpu_ms": 3.1439881001006142,
+        "build_inclusive_ms": 0.025524100146867568,
+        "sync_inclusive_ms": 3.169512200247482
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0008372999445782625,
+        "gpu_ms": 0.21837100007360277,
+        "build_inclusive_ms": 0.0008372999445782625,
+        "sync_inclusive_ms": 0.21920830001818103
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.1058996002029744,
+        "gpu_ms": 1.6974122994952268,
+        "build_inclusive_ms": 0.18407880013455724,
+        "sync_inclusive_ms": 5.859470800101008
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04560439995202614,
+        "gpu_ms": 2.389150000249174,
+        "build_inclusive_ms": 0.04560439995202614,
+        "sync_inclusive_ms": 2.4347544002012
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.0325747999795567,
+        "gpu_ms": 1.5888297002220497,
+        "build_inclusive_ms": 0.0325747999795567,
+        "sync_inclusive_ms": 1.6214045002016064
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.0881418999597372,
+        "gpu_ms": 0.40825390017289465,
+        "build_inclusive_ms": 0.13742930002536013,
+        "sync_inclusive_ms": 3.0347959000437186
+      },
+      {
+        "group": "qsa.arm.gathered_decode",
+        "calls": 2.0,
+        "build_ms": 0.019324900063111272,
+        "gpu_ms": 0.09932499995102262,
+        "build_inclusive_ms": 0.037691599959543964,
+        "sync_inclusive_ms": 2.099433299940756
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.008445599905826384,
+        "gpu_ms": 0.9685004000857589,
+        "build_inclusive_ms": 0.008445599905826384,
+        "sync_inclusive_ms": 0.9769459999915853
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002112500078510493,
+        "gpu_ms": 0.04950429990913108,
+        "build_inclusive_ms": 0.002112500078510493,
+        "sync_inclusive_ms": 0.05161679998764157
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.008504299989908759,
+        "gpu_ms": 0.4081246999476207,
+        "build_inclusive_ms": 0.008504299989908759,
+        "sync_inclusive_ms": 0.41662899993752944
+      },
+      {
+        "group": "qsa.sdpa",
+        "calls": 2.0,
+        "build_ms": 0.001416800000697549,
+        "gpu_ms": 0.58579159999681,
+        "build_inclusive_ms": 0.001416800000697549,
+        "sync_inclusive_ms": 0.5872083999975075
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009483300027568475,
+        "gpu_ms": 0.37786669995512057,
+        "build_inclusive_ms": 0.009483300027568475,
+        "sync_inclusive_ms": 0.38734999998268904
+      }
+    ],
+    "context": 8192,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 4,
+    "arm": "verify",
+    "want_hidden": true,
+    "step_ms": 5.647645999943052,
+    "build_ms": 2.5100210000346124,
+    "gpu_tail_ms": 3.1376249999084393,
+    "sync_step_ms": 22.760625000046275,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.19032539998988796,
+        "gpu_ms": 2.221332899898698,
+        "build_inclusive_ms": 0.19032539998988796,
+        "sync_inclusive_ms": 2.411658299888586
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2501537001762699,
+        "gpu_ms": 5.000225199773922,
+        "build_inclusive_ms": 0.2501537001762699,
+        "sync_inclusive_ms": 5.250378899950192
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02581190003638767,
+        "gpu_ms": 3.1608962000291285,
+        "build_inclusive_ms": 0.02581190003638767,
+        "sync_inclusive_ms": 3.186708100065516
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.000916599992706324,
+        "gpu_ms": 0.215595799932089,
+        "build_inclusive_ms": 0.000916599992706324,
+        "sync_inclusive_ms": 0.21651239992479532
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10954209999454179,
+        "gpu_ms": 1.7997418000732068,
+        "build_inclusive_ms": 0.20977889998903265,
+        "sync_inclusive_ms": 7.219729200051006
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.05201240001042606,
+        "gpu_ms": 3.5183165999796984,
+        "build_inclusive_ms": 0.05201240001042606,
+        "sync_inclusive_ms": 3.5703289999901244
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.0482243999840648,
+        "gpu_ms": 1.6918919000090682,
+        "build_inclusive_ms": 0.0482243999840648,
+        "sync_inclusive_ms": 1.740116299993133
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.10167969999201887,
+        "gpu_ms": 0.481253999873843,
+        "build_inclusive_ms": 0.22806249999121064,
+        "sync_inclusive_ms": 4.132400099933875
+      },
+      {
+        "group": "qsa.arm.gathered_block",
+        "calls": 2.0,
+        "build_ms": 0.07056270005705301,
+        "gpu_ms": 0.8377540000310546,
+        "build_inclusive_ms": 0.08730809997814504,
+        "sync_inclusive_ms": 2.690979000021798
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.00970379999216675,
+        "gpu_ms": 1.2901250000368236,
+        "build_inclusive_ms": 0.00970379999216675,
+        "sync_inclusive_ms": 1.2998288000289904
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.030574799984606216,
+        "gpu_ms": 0.4236252000737295,
+        "build_inclusive_ms": 0.030574799984606216,
+        "sync_inclusive_ms": 0.4542000000583357
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.0070415999289252795,
+        "gpu_ms": 0.47579189997577487,
+        "build_inclusive_ms": 0.0070415999289252795,
+        "sync_inclusive_ms": 0.48283349990470015
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.008499900036440522,
+        "gpu_ms": 0.3957874999514388,
+        "build_inclusive_ms": 0.008499900036440522,
+        "sync_inclusive_ms": 0.4042873999878793
+      }
+    ],
+    "context": 8192,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "context": 8192,
+    "elimination": {
+      "default|w1|plain": 3.962124499935271,
+      "default|w1|hidden": 4.005729499908739,
+      "default|w4|hidden": 5.6356249999680585,
+      "dense-qsa|w1|plain": 3.967396000007284,
+      "dense-qsa|w1|hidden": 4.010354000001826,
+      "dense-qsa|w4|hidden": 6.3002294999705555,
+      "no-singleton-verify|w1|plain": 4.038499499984027,
+      "no-singleton-verify|w1|hidden": 4.011395500015169,
+      "no-singleton-verify|w4|hidden": 5.7163124998851345
+    }
+  },
+  {
+    "width": 1,
+    "arm": "decode",
+    "want_hidden": false,
+    "step_ms": 4.012396000007357,
+    "build_ms": 2.237874999991618,
+    "gpu_tail_ms": 1.7745210000157385,
+    "sync_step_ms": 19.987208500083398,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.1985957999522725,
+        "gpu_ms": 1.8390620000900526,
+        "build_inclusive_ms": 0.1985957999522725,
+        "sync_inclusive_ms": 2.037657800042325
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2353700001776815,
+        "gpu_ms": 5.066646499926719,
+        "build_inclusive_ms": 0.2353700001776815,
+        "sync_inclusive_ms": 5.302016500104401
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02538740000090911,
+        "gpu_ms": 3.1055627000114328,
+        "build_inclusive_ms": 0.02538740000090911,
+        "sync_inclusive_ms": 3.130950100012342
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0006043000212230254,
+        "gpu_ms": 0.2269037999894863,
+        "build_inclusive_ms": 0.0006043000212230254,
+        "sync_inclusive_ms": 0.2275081000107093
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10177520014167385,
+        "gpu_ms": 1.7237035000562173,
+        "build_inclusive_ms": 0.17919149995577754,
+        "sync_inclusive_ms": 5.82167490010761
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.045237499944050796,
+        "gpu_ms": 2.330100500012122,
+        "build_inclusive_ms": 0.045237499944050796,
+        "sync_inclusive_ms": 2.375337999956173
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.0321787998700529,
+        "gpu_ms": 1.5886794000834925,
+        "build_inclusive_ms": 0.0321787998700529,
+        "sync_inclusive_ms": 1.6208581999535454
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.09038359987698641,
+        "gpu_ms": 0.4105999002149474,
+        "build_inclusive_ms": 0.14092489993799973,
+        "sync_inclusive_ms": 3.0437997999570143
+      },
+      {
+        "group": "qsa.arm.gathered_decode",
+        "calls": 2.0,
+        "build_ms": 0.01912880011332163,
+        "gpu_ms": 0.09780399971077713,
+        "build_inclusive_ms": 0.03863320000618842,
+        "sync_inclusive_ms": 2.102024799910396
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.008154099987223162,
+        "gpu_ms": 0.9912876000498727,
+        "build_inclusive_ms": 0.008154099987223162,
+        "sync_inclusive_ms": 0.9994417000370959
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.0022998000531515572,
+        "gpu_ms": 0.04970009995304281,
+        "build_inclusive_ms": 0.0022998000531515572,
+        "sync_inclusive_ms": 0.051999900006194366
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.009858399971562903,
+        "gpu_ms": 0.4175294000560825,
+        "build_inclusive_ms": 0.009858399971562903,
+        "sync_inclusive_ms": 0.4273878000276454
+      },
+      {
+        "group": "qsa.sdpa",
+        "calls": 2.0,
+        "build_ms": 0.0014918999340807204,
+        "gpu_ms": 0.556770600087475,
+        "build_inclusive_ms": 0.0014918999340807204,
+        "sync_inclusive_ms": 0.5582625000215558
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009608300001673342,
+        "gpu_ms": 0.379183299946817,
+        "build_inclusive_ms": 0.009608300001673342,
+        "sync_inclusive_ms": 0.38879159994849033
+      }
+    ],
+    "context": 16384,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 1,
+    "arm": "decode-hidden",
+    "want_hidden": true,
+    "step_ms": 4.0176250000740765,
+    "build_ms": 2.1978954999894995,
+    "gpu_tail_ms": 1.819729500084577,
+    "sync_step_ms": 20.12614600005236,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.19906280001578125,
+        "gpu_ms": 1.8835580001223207,
+        "build_inclusive_ms": 0.19906280001578125,
+        "sync_inclusive_ms": 2.082620800138102
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.22383740013083298,
+        "gpu_ms": 5.056182499970419,
+        "build_inclusive_ms": 0.22383740013083298,
+        "sync_inclusive_ms": 5.2800199001012516
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.02421649996904307,
+        "gpu_ms": 3.097875400180783,
+        "build_inclusive_ms": 0.02421649996904307,
+        "sync_inclusive_ms": 3.122091900149826
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0008372999445782625,
+        "gpu_ms": 0.2144210000324165,
+        "build_inclusive_ms": 0.0008372999445782625,
+        "sync_inclusive_ms": 0.21525829997699475
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10280859987688018,
+        "gpu_ms": 1.741924699899755,
+        "build_inclusive_ms": 0.180828799898336,
+        "sync_inclusive_ms": 5.904775299927678
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04422879994763207,
+        "gpu_ms": 2.375909000079446,
+        "build_inclusive_ms": 0.04422879994763207,
+        "sync_inclusive_ms": 2.420137800027078
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.03379140007382375,
+        "gpu_ms": 1.6061128000501412,
+        "build_inclusive_ms": 0.03379140007382375,
+        "sync_inclusive_ms": 1.639904200123965
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.08793340007287043,
+        "gpu_ms": 0.4131705999270707,
+        "build_inclusive_ms": 0.13910010004565265,
+        "sync_inclusive_ms": 3.086141599919756
+      },
+      {
+        "group": "qsa.arm.gathered_decode",
+        "calls": 2.0,
+        "build_ms": 0.019399799975872156,
+        "gpu_ms": 0.09588780003468855,
+        "build_inclusive_ms": 0.03945410003325378,
+        "sync_inclusive_ms": 2.139895999971486
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.009329200088359357,
+        "gpu_ms": 0.9929709998459657,
+        "build_inclusive_ms": 0.009329200088359357,
+        "sync_inclusive_ms": 1.002300199934325
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002112499987561023,
+        "gpu_ms": 0.04962079999586422,
+        "build_inclusive_ms": 0.002112499987561023,
+        "sync_inclusive_ms": 0.05173329998342524
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.009395899951414322,
+        "gpu_ms": 0.4184998000482665,
+        "build_inclusive_ms": 0.009395899951414322,
+        "sync_inclusive_ms": 0.4278956999996808
+      },
+      {
+        "group": "qsa.sdpa",
+        "calls": 2.0,
+        "build_ms": 0.0013292000176079455,
+        "gpu_ms": 0.5930833000093116,
+        "build_inclusive_ms": 0.0013292000176079455,
+        "sync_inclusive_ms": 0.5944125000269196
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009600099951967422,
+        "gpu_ms": 0.38380820001293614,
+        "build_inclusive_ms": 0.009600099951967422,
+        "sync_inclusive_ms": 0.39340829996490356
+      }
+    ],
+    "context": 16384,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 4,
+    "arm": "verify",
+    "want_hidden": true,
+    "step_ms": 5.727395500002785,
+    "build_ms": 2.6385205001133727,
+    "gpu_tail_ms": 3.0888749998894127,
+    "sync_step_ms": 22.687791500061394,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.18415829993045918,
+        "gpu_ms": 2.1993584000711053,
+        "build_inclusive_ms": 0.18415829993045918,
+        "sync_inclusive_ms": 2.3835167000015645
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.24165849997643818,
+        "gpu_ms": 4.974536999998236,
+        "build_inclusive_ms": 0.24165849997643818,
+        "sync_inclusive_ms": 5.216195499974674
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.024270300150419644,
+        "gpu_ms": 3.203046299950074,
+        "build_inclusive_ms": 0.024270300150419644,
+        "sync_inclusive_ms": 3.227316600100494
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0007584000059068785,
+        "gpu_ms": 0.213778900001671,
+        "build_inclusive_ms": 0.0007584000059068785,
+        "sync_inclusive_ms": 0.21453730000757787
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.1046699997914402,
+        "gpu_ms": 1.7758963001142547,
+        "build_inclusive_ms": 0.1973166998823217,
+        "sync_inclusive_ms": 7.219833099884454
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.046404499971686164,
+        "gpu_ms": 3.553991800026779,
+        "build_inclusive_ms": 0.046404499971686164,
+        "sync_inclusive_ms": 3.600396299998465
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.04624220011919533,
+        "gpu_ms": 1.6926282998610986,
+        "build_inclusive_ms": 0.04624220011919533,
+        "sync_inclusive_ms": 1.738870499980294
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.09757929992701975,
+        "gpu_ms": 0.4721916999642417,
+        "build_inclusive_ms": 0.22429149998970388,
+        "sync_inclusive_ms": 4.086679299985008
+      },
+      {
+        "group": "qsa.arm.gathered_block",
+        "calls": 2.0,
+        "build_ms": 0.07216639992293494,
+        "gpu_ms": 0.7934375001013905,
+        "build_inclusive_ms": 0.08977899999536021,
+        "sync_inclusive_ms": 2.651591800008646
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.010912500033555261,
+        "gpu_ms": 1.3147918999720787,
+        "build_inclusive_ms": 0.010912500033555261,
+        "sync_inclusive_ms": 1.325704400005634
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.027695799963112222,
+        "gpu_ms": 0.43074570007775037,
+        "build_inclusive_ms": 0.027695799963112222,
+        "sync_inclusive_ms": 0.4584415000408626
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.006700100038870005,
+        "gpu_ms": 0.45358339993981645,
+        "build_inclusive_ms": 0.006700100038870005,
+        "sync_inclusive_ms": 0.46028349997868645
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009237400104211702,
+        "gpu_ms": 0.3976375999400261,
+        "build_inclusive_ms": 0.009237400104211702,
+        "sync_inclusive_ms": 0.4068750000442378
+      }
+    ],
+    "context": 16384,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "context": 16384,
+    "elimination": {
+      "default|w1|plain": 4.0065624999670035,
+      "default|w1|hidden": 4.072542000017165,
+      "default|w4|hidden": 5.717291499877319,
+      "dense-qsa|w1|plain": 4.010812000046826,
+      "dense-qsa|w1|hidden": 4.018291999955181,
+      "dense-qsa|w4|hidden": 7.347520499934035,
+      "no-singleton-verify|w1|plain": 4.016833000036968,
+      "no-singleton-verify|w1|hidden": 4.068770999992921,
+      "no-singleton-verify|w4|hidden": 5.705750000061016
+    }
+  },
+  {
+    "width": 1,
+    "arm": "decode",
+    "want_hidden": false,
+    "step_ms": 4.639271000087319,
+    "build_ms": 2.316771000096196,
+    "gpu_tail_ms": 2.3224999999911233,
+    "sync_step_ms": 21.711729499998,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.20100790006836178,
+        "gpu_ms": 1.938684099945931,
+        "build_inclusive_ms": 0.20100790006836178,
+        "sync_inclusive_ms": 2.1396920000142927
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2271005000011428,
+        "gpu_ms": 5.473340599837684,
+        "build_inclusive_ms": 0.2271005000011428,
+        "sync_inclusive_ms": 5.700441099838827
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.024432800023532764,
+        "gpu_ms": 3.2972875998666495,
+        "build_inclusive_ms": 0.024432800023532764,
+        "sync_inclusive_ms": 3.3217203998901823
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0006248000090636197,
+        "gpu_ms": 0.20784199996342068,
+        "build_inclusive_ms": 0.0006248000090636197,
+        "sync_inclusive_ms": 0.2084667999724843
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.105430000371598,
+        "gpu_ms": 1.8635818994653164,
+        "build_inclusive_ms": 0.17937950012765214,
+        "sync_inclusive_ms": 6.2911667999514975
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04382889985663496,
+        "gpu_ms": 2.5595672002054926,
+        "build_inclusive_ms": 0.04382889985663496,
+        "sync_inclusive_ms": 2.6033961000621275
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.030120599899419176,
+        "gpu_ms": 1.6886382001530365,
+        "build_inclusive_ms": 0.030120599899419176,
+        "sync_inclusive_ms": 1.7187588000524556
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.08630849995370227,
+        "gpu_ms": 0.5139457000950642,
+        "build_inclusive_ms": 0.1343165999287521,
+        "sync_inclusive_ms": 3.4370541999578563
+      },
+      {
+        "group": "qsa.arm.gathered_decode",
+        "calls": 2.0,
+        "build_ms": 0.01895760003662872,
+        "gpu_ms": 0.10260120000111783,
+        "build_inclusive_ms": 0.036495599965746806,
+        "sync_inclusive_ms": 2.3260210999751507
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.008845699903758941,
+        "gpu_ms": 1.1009334001755633,
+        "build_inclusive_ms": 0.008845699903758941,
+        "sync_inclusive_ms": 1.1097791000793222
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.002446000007694238,
+        "gpu_ms": 0.0825290999500794,
+        "build_inclusive_ms": 0.002446000007694238,
+        "sync_inclusive_ms": 0.08497509995777364
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.007225300055324624,
+        "gpu_ms": 0.4844868999271057,
+        "build_inclusive_ms": 0.007225300055324624,
+        "sync_inclusive_ms": 0.4917121999824303
+      },
+      {
+        "group": "qsa.sdpa",
+        "calls": 2.0,
+        "build_ms": 0.0014669999700345215,
+        "gpu_ms": 0.6015039999056171,
+        "build_inclusive_ms": 0.0014669999700345215,
+        "sync_inclusive_ms": 0.6029709998756516
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.009066500001608802,
+        "gpu_ms": 0.41673729997455666,
+        "build_inclusive_ms": 0.009066500001608802,
+        "sync_inclusive_ms": 0.42580379997616546
+      }
+    ],
+    "context": 64000,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 1,
+    "arm": "decode-hidden",
+    "want_hidden": true,
+    "step_ms": 4.15672850010651,
+    "build_ms": 2.2382710000101724,
+    "gpu_tail_ms": 1.9184575000963378,
+    "sync_step_ms": 19.95541650001087,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.20515010005510703,
+        "gpu_ms": 1.817854199998692,
+        "build_inclusive_ms": 0.20515010005510703,
+        "sync_inclusive_ms": 2.023004300053799
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.235328999997364,
+        "gpu_ms": 5.202483599941843,
+        "build_inclusive_ms": 0.235328999997364,
+        "sync_inclusive_ms": 5.437812599939207
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.025390999894625566,
+        "gpu_ms": 3.0819169001233604,
+        "build_inclusive_ms": 0.025390999894625566,
+        "sync_inclusive_ms": 3.107307900017986
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0007917000175439171,
+        "gpu_ms": 0.20452909998311952,
+        "build_inclusive_ms": 0.0007917000175439171,
+        "sync_inclusive_ms": 0.20532080000066344
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10743300001649914,
+        "gpu_ms": 1.7598037999050575,
+        "build_inclusive_ms": 0.19005019998985517,
+        "sync_inclusive_ms": 6.024320299957253
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.04845049986670347,
+        "gpu_ms": 2.453012200089688,
+        "build_inclusive_ms": 0.04845049986670347,
+        "sync_inclusive_ms": 2.5014626999563916
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.03416670010665257,
+        "gpu_ms": 1.6214540999726523,
+        "build_inclusive_ms": 0.03416670010665257,
+        "sync_inclusive_ms": 1.655620800079305
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.08573299990075611,
+        "gpu_ms": 0.41511279998758255,
+        "build_inclusive_ms": 0.13164579991098435,
+        "sync_inclusive_ms": 3.113295899993318
+      },
+      {
+        "group": "qsa.arm.gathered_decode",
+        "calls": 2.0,
+        "build_ms": 0.018817000022863795,
+        "gpu_ms": 0.09987850003199128,
+        "build_inclusive_ms": 0.03495840001050965,
+        "sync_inclusive_ms": 2.1394165000856447
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.007574699975521071,
+        "gpu_ms": 1.009175300100651,
+        "build_inclusive_ms": 0.007574699975521071,
+        "sync_inclusive_ms": 1.016750000076172
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.00227949999498378,
+        "gpu_ms": 0.08297900001252856,
+        "build_inclusive_ms": 0.00227949999498378,
+        "sync_inclusive_ms": 0.08525850000751234
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.007083299988153158,
+        "gpu_ms": 0.4406294999853344,
+        "build_inclusive_ms": 0.007083299988153158,
+        "sync_inclusive_ms": 0.44771279997348756
+      },
+      {
+        "group": "qsa.sdpa",
+        "calls": 2.0,
+        "build_ms": 0.001483400023971626,
+        "gpu_ms": 0.5547747999571584,
+        "build_inclusive_ms": 0.001483400023971626,
+        "sync_inclusive_ms": 0.55625819998113
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.008674900004734809,
+        "gpu_ms": 0.37910020000708755,
+        "build_inclusive_ms": 0.008674900004734809,
+        "sync_inclusive_ms": 0.38777510001182236
+      }
+    ],
+    "context": 64000,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "width": 4,
+    "arm": "verify",
+    "want_hidden": true,
+    "step_ms": 5.812375000004977,
+    "build_ms": 2.663500500034388,
+    "gpu_tail_ms": 3.1488744999705887,
+    "sync_step_ms": 21.84377100002166,
+    "has_gpu_column": true,
+    "groups": [
+      {
+        "group": "gdn",
+        "calls": 6.0,
+        "build_ms": 0.1896458999681272,
+        "gpu_ms": 2.159962500081747,
+        "build_inclusive_ms": 0.1896458999681272,
+        "sync_inclusive_ms": 2.349608400049874
+      },
+      {
+        "group": "hyper_connection",
+        "calls": 17.0,
+        "build_ms": 0.2417912000510114,
+        "gpu_ms": 4.817874999866945,
+        "build_inclusive_ms": 0.2417912000510114,
+        "sync_inclusive_ms": 5.059666199917956
+      },
+      {
+        "group": "hyper_inject",
+        "calls": 16.0,
+        "build_ms": 0.025287599964940455,
+        "gpu_ms": 2.9039454000894693,
+        "build_inclusive_ms": 0.025287599964940455,
+        "sync_inclusive_ms": 2.92923300005441
+      },
+      {
+        "group": "lm_head",
+        "calls": 1.0,
+        "build_ms": 0.0012165999578428455,
+        "gpu_ms": 0.18332909999116964,
+        "build_inclusive_ms": 0.0012165999578428455,
+        "sync_inclusive_ms": 0.1845456999490125
+      },
+      {
+        "group": "moe",
+        "calls": 8.0,
+        "build_ms": 0.10894539987020835,
+        "gpu_ms": 1.7278380001016558,
+        "build_inclusive_ms": 0.20746239993059135,
+        "sync_inclusive_ms": 6.925404299977345
+      },
+      {
+        "group": "moe.experts",
+        "calls": 8.0,
+        "build_ms": 0.05054209991612879,
+        "gpu_ms": 3.4117284000330983,
+        "build_inclusive_ms": 0.05054209991612879,
+        "sync_inclusive_ms": 3.462270499949227
+      },
+      {
+        "group": "moe.shared",
+        "calls": 8.0,
+        "build_ms": 0.04797490014425421,
+        "gpu_ms": 1.5783754999119992,
+        "build_inclusive_ms": 0.04797490014425421,
+        "sync_inclusive_ms": 1.6263504000562534
+      },
+      {
+        "group": "qsa",
+        "calls": 2.0,
+        "build_ms": 0.09998820003147557,
+        "gpu_ms": 0.45093669991729257,
+        "build_inclusive_ms": 0.2282087000367028,
+        "sync_inclusive_ms": 4.0617417000021305
+      },
+      {
+        "group": "qsa.arm.gathered_block",
+        "calls": 2.0,
+        "build_ms": 0.07386240008599998,
+        "gpu_ms": 0.7888789001299301,
+        "build_inclusive_ms": 0.09188330000142741,
+        "sync_inclusive_ms": 2.6840208000749044
+      },
+      {
+        "group": "qsa.gather",
+        "calls": 4.0,
+        "build_ms": 0.010737299908214482,
+        "gpu_ms": 1.328321199957827,
+        "build_inclusive_ms": 0.010737299908214482,
+        "sync_inclusive_ms": 1.3390584998660415
+      },
+      {
+        "group": "qsa.pool",
+        "calls": 2.0,
+        "build_ms": 0.02846639995368605,
+        "gpu_ms": 0.4104128000790297,
+        "build_inclusive_ms": 0.02846639995368605,
+        "sync_inclusive_ms": 0.43887920003271574
+      },
+      {
+        "group": "qsa.scores",
+        "calls": 2.0,
+        "build_ms": 0.007283600007212954,
+        "gpu_ms": 0.4749373999857198,
+        "build_inclusive_ms": 0.007283600007212954,
+        "sync_inclusive_ms": 0.4822209999929328
+      },
+      {
+        "group": "qsa.update_indexer",
+        "calls": 2.0,
+        "build_ms": 0.007870800050113758,
+        "gpu_ms": 0.3800459998956285,
+        "build_inclusive_ms": 0.007870800050113758,
+        "sync_inclusive_ms": 0.38791679994574224
+      }
+    ],
+    "context": 64000,
+    "tag": "",
+    "config": "real-shapes"
+  },
+  {
+    "context": 64000,
+    "elimination": {
+      "default|w1|plain": 4.135562500096057,
+      "default|w1|hidden": 4.143436999925143,
+      "default|w4|hidden": 5.818937999947593,
+      "dense-qsa|w1|plain": 4.360374499924546,
+      "dense-qsa|w1|hidden": 4.3983539999317145,
+      "dense-qsa|w4|hidden": 13.905312499900901,
+      "no-singleton-verify|w1|plain": 4.132291500013707,
+      "no-singleton-verify|w1|hidden": 4.3833125000674045,
+      "no-singleton-verify|w4|hidden": 5.8124790000420035
+    }
+  }
+]

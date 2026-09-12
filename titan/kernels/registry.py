@@ -38,7 +38,9 @@ __all__ = [
     "KernelRegistry",
     "ShapeClass",
     "build_registry",
+    "current",
     "reference_only",
+    "set_current",
     "shape_class",
 ]
 
@@ -188,6 +190,15 @@ class KernelRegistry:
             return False
         return True
 
+    def fast_disabled(self, name: str) -> bool:
+        """Is this op's fast path off by *policy* rather than by shape?
+
+        The shape-class test is the caller's business; this answers only "did
+        the configuration turn this op off", which is what a call site needs in
+        order to decide between the registry and its own stock MLX path.
+        """
+        return not self._fast_allowed(self.get(name))
+
     def selection(self, name: str, key: ShapeClass) -> str:
         """``"fast"`` or ``"reference"`` for this op at this shape class, memoised."""
         op = self.get(name)
@@ -298,6 +309,7 @@ def build_registry(config: KernelConfig | None = None) -> KernelRegistry:
     for module in _op_modules():
         registry.register(module.OP)
     registry.validate()
+    set_current(registry)
     return registry
 
 
@@ -308,4 +320,37 @@ def reference_only() -> KernelRegistry:
     names = registry.names()
     registry.config = KernelConfig(disabled=names, fail_open=False)
     registry.reset()
+    set_current(registry)
     return registry
+
+
+# ---------------------------------------------------------------------------
+# the process's configured registry
+# ---------------------------------------------------------------------------
+#
+# ``titan.config.wiring`` builds a registry from ``kernels`` and hands it to
+# the engine. The MLX adapter is not on that path: ``build_backend`` never
+# passes the registry down, and ``titan/adapters/mlx/kernels.py`` used to build
+# its own with default settings. The consequence was quiet and bad --
+# ``kernels.reference_only = true`` disabled nothing inside the forward, so the
+# control arm of every kernel A/B was not a control, and INCIDENTS rule 2 could
+# not be followed as written.
+#
+# Publishing the last registry built is the smallest fix that stays out of the
+# wiring: the wiring builds one at startup, before the checkpoint is loaded and
+# long before the first forward, so the adapter's first lookup finds it. A
+# process that never builds one (a unit test, a bench) gets ``None`` and the
+# adapter falls back to building a default, which is what it did before.
+
+_current: KernelRegistry | None = None
+
+
+def set_current(registry: KernelRegistry | None) -> None:
+    """Publish *registry* as the process's configured one."""
+    global _current
+    _current = registry
+
+
+def current() -> KernelRegistry | None:
+    """The registry the process was configured with, or ``None``."""
+    return _current

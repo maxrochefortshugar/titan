@@ -143,3 +143,60 @@ def test_real_shape(seeded):
     )
     mx.eval(*args)
     assert max_ulp(op.metal(*args, geo, cfg), op.reference(*args, geo, cfg)) <= 1
+
+
+@pytest.mark.slow
+@pytest.mark.exactness
+@pytest.mark.parametrize("pads", [[0], [0, 7]])
+def test_bounds_at_the_largest_real_shape(seeded, pads):
+    """INCIDENTS rule 3: the largest shape this op can see, before it is on.
+
+    A 64k context is the longest prompt the server accepts, 8 is the widest
+    verify block the depth policy can ask for, and the head geometry is the
+    checkpoint's. Two rows with a phase between them is the batched case; one
+    row is what a single stream decodes at. What is being checked is that the
+    index arithmetic stays inside the arrays at the largest indices it will
+    ever compute -- the selected columns, the phase offset added to them, and
+    the ``ratio - 1`` tail past the last complete block, which is the one that
+    can run off the end of the cache.
+    """
+    context, length = 65536, 8
+    cfg = op.QSAConfig(24, 2, 256, 128, 4, 2048)
+    geo = op.QSAGeometry(context, pads, 4)
+    batch = geo.batch
+    mx.random.seed(0)
+    args = (
+        mx.random.normal((batch, 24, length, 256)).astype(mx.bfloat16),
+        mx.random.normal((batch, 2, context, 256)).astype(mx.bfloat16),
+        mx.random.normal((batch, 2, context, 256)).astype(mx.bfloat16),
+        mx.random.normal((batch, length, 4, 128)).astype(mx.bfloat16),
+        mx.random.normal((batch, geo.slots, 128)).astype(mx.bfloat16),
+    )
+    mx.eval(*args)
+    got = op.metal(*args, geo, cfg)
+    mx.eval(got)
+    assert got.shape == (batch, length, 24, 256)
+    assert bool(mx.all(mx.isfinite(got.astype(mx.float32))).item())
+    assert max_ulp(got, op.reference(*args, geo, cfg)) <= 1
+
+
+@pytest.mark.slow
+def test_the_tail_never_reads_past_the_cache(seeded):
+    """The tail is ``ratio - 1`` columns past the last complete block, so at a
+    width that is one short of a block boundary two of the three are out of
+    bounds. They must be masked, not clamped into a real row: a clamped column
+    would be a silent wrong answer rather than a crash."""
+    cfg = _cfg()
+    for width in (253, 254, 255, 256):
+        geo = op.QSAGeometry(width, [0, 5], RATIO)
+        mx.random.seed(width)
+        args = (
+            mx.random.normal((2, HQ, 1, D)).astype(mx.bfloat16),
+            mx.random.normal((2, HKV, width, D)).astype(mx.bfloat16),
+            mx.random.normal((2, HKV, width, D)).astype(mx.bfloat16),
+            mx.random.normal((2, 1, 4, DI)).astype(mx.bfloat16),
+            mx.random.normal((2, geo.slots, DI)).astype(mx.bfloat16),
+        )
+        mx.eval(*args)
+        assert bit_identical(op.metal(*args, geo, cfg),
+                             op.reference(*args, geo, cfg))

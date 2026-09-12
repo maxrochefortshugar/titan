@@ -41,6 +41,17 @@ the library keeps is the compiled-kernel handle.
 """
 
 from titan.kernels import registry
-from titan.kernels.registry import build_registry, reference_only
+from titan.kernels.registry import (
+    build_registry,
+    current,
+    reference_only,
+    set_current,
+)
 
-__all__ = ["build_registry", "reference_only", "registry"]
+__all__ = [
+    "build_registry",
+    "current",
+    "reference_only",
+    "registry",
+    "set_current",
+]
