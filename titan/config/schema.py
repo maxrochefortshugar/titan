@@ -285,6 +285,24 @@ class SpeculationConfig:
     mtp_depth_min: int = 1
     adaptive_depth: bool = True
     acceptance_window: int = 64
+    depth_policy: str = "expected_value"
+    """Which adaptive policy runs when ``adaptive_depth`` is on.
+
+    ``expected_value`` is the converging policy: one decayed cost mean per
+    width, per-position acceptance, hysteresis, dwell and probe runs.
+    ``mean_accepted`` is the ROUND4 policy, ``round(mean_accepted) + 1`` with
+    two clamps, kept so the two can be measured against each other on the same
+    machine in the same hour. Ignored when ``adaptive_depth`` is false."""
+    depth_probe_every: int = 48
+    """Decisions between probe runs in the expected-value policy. Zero is no
+    probing, which is the policy without its route out of a wrong resting
+    point."""
+    depth_probe_cycles: int = 8
+    """Consecutive decisions one probe run spends at the neighbouring depth.
+    With ``depth_probe_every`` this is the duty cycle: 8 in 48 is 17%."""
+    depth_hysteresis: float = 0.06
+    """How much better in expected committed tokens per millisecond a
+    candidate depth has to be before it displaces the incumbent."""
     mtp_chain: str = "head_output"
     """How draft step ``i+1`` is fed. ``head_output`` re-enters the head on its
     own post-norm output, which is vLLM's form and what EAGLE 3.1 credits for
@@ -356,6 +374,25 @@ class KernelConfig:
     """A fast kernel that raises falls back and counts, rather than killing the
     sequence. Safe because the exactness tests make output independent of which
     implementation ran."""
+    prefill_only: tuple[str, ...] = ()
+    """Ops whose fast path is taken during prefill and not during decode.
+
+    ROUND4 measured ``moe_gather_int8`` at -3.7% on a 64k decode, which is a
+    reason to keep it off a decode and not in itself a reason to keep it off a
+    prefill: the two phases run the same op at shapes three orders of
+    magnitude apart. Naming an op here selects its fast path only while a
+    prompt is going in. An op named here still has to be named in ``enabled``
+    (or be on by default) to run at all."""
+    forward_paths_on: tuple[str, ...] = ()
+    """Vendored forward arms switched on over their defaults, by name.
+
+    A *path* is not an op: it is an arm of the vendored forward that changes
+    how much host work and how many launches a step costs without changing
+    what the step computes (``models/forward_paths.py``). The names are that
+    module's. Two tuples rather than one mapping so that a ``--set`` override
+    on the command line looks exactly like the kernel lists next to it."""
+    forward_paths_off: tuple[str, ...] = ()
+    """Vendored forward arms switched off over their defaults, by name."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -592,6 +629,30 @@ class TitanConfig:
             raise ConfigError(
                 f"speculation.mtp_chain_cache must be 'clone' or 'trim', got "
                 f"{sp.mtp_chain_cache!r}"
+            )
+        if set(k.prefill_only) & set(k.disabled):
+            both = sorted(set(k.prefill_only) & set(k.disabled))
+            raise ConfigError(
+                "kernels.prefill_only and kernels.disabled name the same op: "
+                + ", ".join(both)
+            )
+        if set(k.forward_paths_on) & set(k.forward_paths_off):
+            both = sorted(set(k.forward_paths_on) & set(k.forward_paths_off))
+            raise ConfigError(
+                "kernels.forward_paths_on and kernels.forward_paths_off name "
+                f"the same path: {', '.join(both)}"
+            )
+        if sp.depth_policy not in ("expected_value", "mean_accepted"):
+            raise ConfigError(
+                "speculation.depth_policy must be 'expected_value' or "
+                f"'mean_accepted', got {sp.depth_policy!r}"
+            )
+        _at_least("speculation.depth_probe_every", sp.depth_probe_every, 0)
+        _at_least("speculation.depth_probe_cycles", sp.depth_probe_cycles, 0)
+        if sp.depth_hysteresis < 0.0:
+            raise ConfigError(
+                "speculation.depth_hysteresis must not be negative, got "
+                f"{sp.depth_hysteresis}"
             )
         if sp.mtp_chain not in ("head_output", "omlx"):
             raise ConfigError(

@@ -288,3 +288,87 @@ def test_the_guard_takes_the_per_token_cost_from_the_backend():
     assert wiring.build_admission_config(config).state_bytes_per_token == 320_000.0
     admission = wiring.build_admission_config(config, Backend())
     assert admission.state_bytes_per_token == 28_000.0
+
+
+# ---------------------------------------------------------------------------
+# the depth policy, and the forward-path switchboard
+# ---------------------------------------------------------------------------
+#
+# ROUND5 step 1 measures the converging policy against the one ROUND4 shipped,
+# so both have to be reachable from a config. "The new policy is steadier" is a
+# claim about two policies, and measuring one of them from a previous round's
+# notes measures the machine's drift as well.
+
+
+def test_the_default_adaptive_policy_is_the_expected_value_one():
+    config = TitanConfig.from_toml(MINIMAL)
+    assert type(wiring.build_verifier(config)).__name__ == (
+        "ExpectedValueDepthController"
+    )
+
+
+def test_the_old_policy_is_selectable_by_name():
+    config = TitanConfig.from_toml(
+        MINIMAL, overrides=["speculation.depth_policy=mean_accepted"]
+    )
+    assert type(wiring.build_verifier(config)).__name__ == "DepthController"
+
+
+def test_a_fixed_policy_ignores_the_policy_name():
+    """``adaptive_depth = false`` is a pinned depth and there is no policy to
+    choose between; asking for the old one must not turn adaptation back on."""
+    config = TitanConfig.from_toml(
+        MINIMAL,
+        overrides=[
+            "speculation.adaptive_depth=false",
+            "speculation.depth_policy=mean_accepted",
+            "speculation.mtp_depth_min=3",
+            "speculation.mtp_depth_max=3",
+        ],
+    )
+    verifier = wiring.build_verifier(config)
+    assert type(verifier).__name__ == "ExpectedValueDepthController"
+    assert verifier.adaptive is False
+    assert verifier.next_depths(1) == [3]
+
+
+def test_the_probe_duty_comes_from_the_config():
+    config = TitanConfig.from_toml(
+        MINIMAL,
+        overrides=[
+            "speculation.depth_probe_every=96",
+            "speculation.depth_probe_cycles=6",
+            "speculation.depth_hysteresis=0.02",
+        ],
+    )
+    verifier = wiring.build_verifier(config)
+    assert (verifier.probe_every, verifier.probe_cycles) == (96, 6)
+    assert verifier.hysteresis == pytest.approx(0.02)
+
+
+def test_an_unknown_forward_path_is_named_rather_than_ignored():
+    config = TitanConfig.from_toml(
+        MINIMAL, overrides=['kernels.forward_paths_on=["no_such_arm"]']
+    )
+    with pytest.raises(ConfigError, match="no_such_arm"):
+        wiring.apply_forward_paths(config)
+
+
+def test_a_forward_path_named_on_is_on_and_the_rest_keep_their_defaults():
+    from titan.adapters.mlx.vendor.mlx_vlm.models import forward_paths
+
+    before = forward_paths.snapshot()
+    config = TitanConfig.from_toml(
+        MINIMAL,
+        overrides=[
+            'kernels.forward_paths_on=["qsa_pooled_bank_f32"]',
+            'kernels.forward_paths_off=["eager_dispatch"]',
+        ],
+    )
+    try:
+        resolved = wiring.apply_forward_paths(config)
+        assert resolved["qsa_pooled_bank_f32"] is True
+        assert resolved["eager_dispatch"] is False
+        assert resolved["cached_norm_scale"] == before["cached_norm_scale"]
+    finally:
+        forward_paths.set_paths(**before)

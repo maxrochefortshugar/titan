@@ -25,8 +25,9 @@ any time with :meth:`KernelRegistry.reset`.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import mlx.core as mx
 
@@ -39,10 +40,48 @@ __all__ = [
     "ShapeClass",
     "build_registry",
     "current",
+    "phase",
     "reference_only",
     "set_current",
+    "set_phase",
     "shape_class",
 ]
+
+
+# ---------------------------------------------------------------------------
+# the prefill/decode phase
+# ---------------------------------------------------------------------------
+#
+# One op can be worth its fast path while a prompt is going in and cost
+# throughput on the decode that follows: ``moe_gather_int8`` runs over 20,480
+# rows on a 2048-token prefill chunk and over ten on a width-1 decode, and
+# ROUND4 measured it at -3.7% on a 64k decode. ``kernels.prefill_only`` is how
+# a configuration says which of the two it means, and this flag is what tells
+# the registry which phase it is in.
+#
+# It is a plain module global rather than a thread-local because the model
+# loop is single-threaded by construction: the scheduler drives prefill and
+# decode from one turn loop, and a second thread touching the GPU is the thing
+# the serve lock exists to prevent.
+
+_PHASE = "decode"
+
+
+def set_phase(name: str) -> str:
+    """Set the current phase; returns the previous one."""
+    global _PHASE
+    previous, _PHASE = _PHASE, str(name)
+    return previous
+
+
+@contextmanager
+def phase(name: str) -> Iterator[None]:
+    """Run a block in ``name`` phase and restore the previous one."""
+    previous = set_phase(name)
+    try:
+        yield
+    finally:
+        set_phase(previous)
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +224,8 @@ class KernelRegistry:
 
     def validate(self) -> None:
         """Reject a stale bisect flag rather than letting it quietly do nothing."""
-        for name in (*self.config.disabled, *self.config.enabled):
+        for name in (*self.config.disabled, *self.config.enabled,
+                     *self.config.prefill_only):
             if name not in self._ops:
                 raise ConfigError(
                     f"kernels config names {name!r}, which is not a registered op"
@@ -209,6 +249,11 @@ class KernelRegistry:
         # remember to list them.
         if op.default_off and not asked_for:
             return False
+        # A prefill-only op is off everywhere except while a prompt is going
+        # in. The selection memo carries the phase, so the same shape class can
+        # resolve one way in each and neither answer is cached over the other.
+        if names & set(self.config.prefill_only) and _PHASE != "prefill":
+            return False
         return True
 
     def defaults(self) -> Mapping[str, bool]:
@@ -227,7 +272,7 @@ class KernelRegistry:
     def selection(self, name: str, key: ShapeClass) -> str:
         """``"fast"`` or ``"reference"`` for this op at this shape class, memoised."""
         op = self.get(name)
-        memo_key = (op.name, key)
+        memo_key = (op.name, key, _PHASE if self.config.prefill_only else "")
         hit = self._memo.get(memo_key)
         if hit is None:
             hit = (

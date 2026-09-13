@@ -22,13 +22,15 @@ CONFIG="${TITAN_CONFIG_FILE:-$HOME/.config/titan/titan.toml}"
 OUT="${TITAN_OUT:-$SRC/bench/decode/round5}"
 mkdir -p "$OUT"
 
-# 107 GB, not 85: that is what the loader's own headroom gate asks for
-# (``_checkpoint_size_gb`` + 8, and the checkpoint is 99 GB of safetensors).
-# The harness used to wait for 85, launch, and then watch the server refuse
-# after burning its own 180-second wait. Waiting for the number that actually
-# gates the load turns a failed arm into a slow one.
+# 80 GB, which is what the loader's headroom gate actually asks for now. The
+# gate used to sum all 21 safetensors shards (99 GB) and add 8, so the harness
+# was made to wait for 107 to avoid launching into a refusal. At HEAD the need
+# is the plan's resident bytes instead, 68.4 GB plus 8, and the serve
+# preflight's own bar is model.weights_gb plus 8. Waiting for 80 clears both
+# with a little to spare and no longer parks the harness above what this
+# machine has free with Docker resident.
 wait_for_memory() {
-  local need_gb=${1:-107}
+  local need_gb=${1:-80}
   for _ in $(seq 1 90); do
     if ! pgrep -f "titan.cli serve" >/dev/null 2>&1; then
       local avail
@@ -51,7 +53,7 @@ stop() {
   pids=$(lsof -nP -iTCP:8085 -sTCP:LISTEN -t 2>/dev/null)
   [ -n "$pids" ] && kill -9 $pids 2>/dev/null
   pkill -f 'titan.cli serve' 2>/dev/null
-  wait_for_memory 107
+  wait_for_memory 80
 }
 
 trap stop EXIT

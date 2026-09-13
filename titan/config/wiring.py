@@ -213,6 +213,34 @@ def build_registry(config: TitanConfig) -> Any:
     return _build(config.kernels)
 
 
+def apply_forward_paths(config: TitanConfig) -> dict[str, bool]:
+    """Set the vendored forward's arm switches from the config, and echo them.
+
+    Runs before the backend is built, because a path is read at call time and a
+    model built under one setting must not be serving under another. Returns
+    the resolved switchboard so a caller can log what it selected; an unknown
+    name is a config error rather than a silent no-op, since the whole point of
+    naming a path in a file is that a bench arm can be reproduced from it.
+    """
+    from titan.adapters.mlx.vendor.mlx_vlm.models import forward_paths  # noqa: PLC0415
+
+    kernels = config.kernels
+    unknown = [
+        name
+        for name in tuple(kernels.forward_paths_on) + tuple(kernels.forward_paths_off)
+        if name not in forward_paths.DEFAULTS
+    ]
+    if unknown:
+        raise ConfigError(
+            "unknown kernels.forward_paths name(s): " + ", ".join(sorted(unknown))
+        )
+    for name in kernels.forward_paths_on:
+        forward_paths.enable(name)
+    for name in kernels.forward_paths_off:
+        forward_paths.disable(name)
+    return dict(forward_paths.snapshot())
+
+
 def build_backend(config: TitanConfig, registry: Any) -> Any:
     """Load the checkpoint and wrap it. The one call that costs minutes.
 
@@ -388,15 +416,34 @@ def build_drafter(config: TitanConfig, *, backend: Any, profiler: Any) -> Any:
 
 
 def build_verifier(config: TitanConfig) -> Any:
-    """The depth policy. Expected value when adaptive, a fixed depth when not."""
+    """The depth policy. Expected value when adaptive, a fixed depth when not.
+
+    ``speculation.depth_policy`` selects between the converging expected-value
+    policy and ROUND4's ``round(mean_accepted) + 1``. The old one is kept
+    selectable because "the new policy is steadier" is a claim about two
+    policies, and measuring one of them from a previous round's notes is
+    measuring the machine's drift as well.
+    """
+    speculation = config.speculation
+    legacy = speculation.adaptive_depth and speculation.depth_policy == "mean_accepted"
     factory = _resolve(
         "titan.engine.decode_cycle",
-        "ExpectedValueDepthController",
+        "DepthController" if legacy else "ExpectedValueDepthController",
         "the depth controller",
     )
-    speculation = config.speculation
+    if legacy:
+        return factory(
+            max_depth=speculation.mtp_depth_max,
+            min_depth=0,
+            adaptive=True,
+            window=speculation.acceptance_window,
+            rows_budget=config.scheduler.decode_rows_budget,
+        )
     return factory(
         max_depth=speculation.mtp_depth_max,
+        probe_every=speculation.depth_probe_every,
+        probe_cycles=speculation.depth_probe_cycles,
+        hysteresis=speculation.depth_hysteresis,
         # Zero when the policy is adaptive, because not drafting is one of the
         # options it has to be able to price: at 64k with an accepted median of
         # 1, a floor of one draft is two rejected columns a cycle that no
@@ -496,6 +543,8 @@ def build_runtime(config: TitanConfig, parts: Parts | None = None) -> TitanRunti
 
     profiler = parts.profiler or build_profiler(config)
     registry = parts.registry or build_registry(config)
+    if parts.backend is None:
+        apply_forward_paths(config)
     backend = parts.backend or build_backend(config, registry)
     tokenizer = parts.tokenizer or build_tokenizer(config)
     template = parts.template or build_template(config)

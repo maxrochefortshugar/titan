@@ -21,6 +21,7 @@ from typing import Any, Iterable, Sequence
 
 import mlx.core as mx
 
+from titan.kernels.registry import phase as kernel_phase
 from titan.core.types import (
     CycleProfile,
     DraftCandidate,
@@ -201,7 +202,31 @@ class MLXModelBackend:
         # measured 200 seconds this way against 0.1 for the same chunk without.
         # The drafter's seed hidden state comes from the verify forward, which
         # is small and is where that path belongs.
-        result = self.model.prefill(
+        with kernel_phase("prefill"):
+            result = self._prefill_forward(
+                model_state, tokens,
+                want_logits=want_logits,
+                next_token=next_token,
+                tokens_after=tokens_after,
+            )
+        if snapshot:
+            # A plan boundary: the cache will be asked to serialise it when the
+            # sequence retires, so it outlives every rollback copy.
+            model_state.stage_snapshot(pinned=True)
+        if tokens_after == 0:
+            self._close_prefill()
+        return None if result.logits is None else _Logits(result.logits)
+
+    def _prefill_forward(
+        self,
+        model_state: Any,
+        tokens: Sequence[int],
+        *,
+        want_logits: bool,
+        next_token: int | None,
+        tokens_after: int,
+    ):
+        return self.model.prefill(
             tokens,
             model_state,
             want_logits=want_logits,
@@ -215,13 +240,6 @@ class MLXModelBackend:
             prime_after=int(tokens_after),
             next_token=next_token,
         )
-        if snapshot:
-            # A plan boundary: the cache will be asked to serialise it when the
-            # sequence retires, so it outlives every rollback copy.
-            model_state.stage_snapshot(pinned=True)
-        if tokens_after == 0:
-            self._close_prefill()
-        return None if result.logits is None else _Logits(result.logits)
 
     # -- the prefill/decode boundary --------------------------------------
     @staticmethod

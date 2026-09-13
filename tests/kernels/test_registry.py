@@ -24,6 +24,7 @@ from titan.kernels.registry import (
     KernelRegistry,
     ShapeClass,
     build_registry,
+    phase,
     reference_only,
     shape_class,
 )
@@ -256,3 +257,61 @@ def test_an_op_without_a_fast_path_never_selects_one():
     assert r.selection("bare", shape_class(mx.zeros((4,)))) == "reference"
     with pytest.raises(KernelError):
         r.get("bare").fast(mx.zeros((4,)))
+
+
+# ---------------------------------------------------------------------------
+# the prefill/decode phase
+# ---------------------------------------------------------------------------
+#
+# ROUND5 step 3: one op can be worth its fast path while a prompt is going in
+# and cost throughput on the decode that follows, because the two phases run it
+# at shapes three orders of magnitude apart. ``kernels.prefill_only`` says
+# which of the two a configuration means. The memo is the interesting part: a
+# selection cached in one phase must not be the answer given in the other.
+
+
+def test_a_prefill_only_op_takes_its_fast_path_only_during_prefill():
+    calls = []
+    r = _registry(calls, KernelConfig(prefill_only=("toy",)))
+    fn = r.resolve("toy")
+    with phase("prefill"):
+        fn(mx.zeros((4,)))
+    fn(mx.zeros((4,)))
+    assert calls == ["fast", "reference"]
+
+
+def test_the_selection_memo_does_not_leak_across_the_phase():
+    calls = []
+    r = _registry(calls, KernelConfig(prefill_only=("toy",)))
+    fn = r.resolve("toy")
+    fn(mx.zeros((4,)))                      # decode first, so reference is cached
+    with phase("prefill"):
+        fn(mx.zeros((4,)))                  # same shape class, other phase
+    fn(mx.zeros((4,)))
+    assert calls == ["reference", "fast", "reference"]
+
+
+def test_an_op_not_named_prefill_only_is_unaffected_by_the_phase():
+    calls = []
+    r = _registry(calls, KernelConfig())
+    fn = r.resolve("toy")
+    with phase("prefill"):
+        fn(mx.zeros((4,)))
+    fn(mx.zeros((4,)))
+    assert calls == ["fast", "fast"]
+
+
+def test_the_phase_is_restored_even_when_the_block_raises():
+    with pytest.raises(RuntimeError):
+        with phase("prefill"):
+            raise RuntimeError("boom")
+    calls = []
+    r = _registry(calls, KernelConfig(prefill_only=("toy",)))
+    r.resolve("toy")(mx.zeros((4,)))
+    assert calls == ["reference"]
+
+
+def test_a_stale_prefill_only_name_is_rejected_like_a_stale_bisect_flag():
+    r = build_registry(KernelConfig(prefill_only=("no_such_op",)))
+    with pytest.raises(ConfigError):
+        r.validate()

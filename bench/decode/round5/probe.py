@@ -119,10 +119,30 @@ def run_prefill(client: Client, words: int, arm: str) -> dict:
         e for e in metrics.get("recent_events", ()) if e.get("event") == "prefill_done"
     ]
     rows = []
+    previous_end: float | None = None
+    previous_snapshot = 0
     for event in chunks:
         size = int(event["end"]) - int(event["start"])
         ms = float(event["ms"])
-        rows.append({"size": size, "ms": round(ms, 2), "tok_s": round(size / ms * 1000.0, 1)})
+        # The event is emitted when the chunk's forward returns and carries the
+        # profiler's own monotonic clock, so the wall between one chunk
+        # finishing and the next one starting is a subtraction and needs no new
+        # instrumentation. That gap is the per-chunk fixed cost ROUND5 step 3
+        # asks for: the turn loop, the snapshot pump, the store session and
+        # whatever the host does between two forwards.
+        at = float(event.get("at", 0.0))
+        started = at - ms / 1000.0
+        gap_ms = None if previous_end is None else round((started - previous_end) * 1000.0, 2)
+        rows.append({
+            "size": size,
+            "ms": round(ms, 2),
+            "tok_s": round(size / ms * 1000.0, 1),
+            "gap_ms": gap_ms,
+            "after_snapshot": previous_snapshot,
+            "snapshot": int(event.get("snapshot", 0)),
+        })
+        previous_end = at
+        previous_snapshot = int(event.get("snapshot", 0))
     # Group by chunk size: every full-sized chunk is the same measurement
     # repeated, and the tail chunks are their own sizes and their own rows.
     by_size: dict[int, list[float]] = {}
@@ -136,6 +156,9 @@ def run_prefill(client: Client, words: int, arm: str) -> dict:
         }
         for size, times in sorted(by_size.items())
     }
+    gaps = [r["gap_ms"] for r in rows if r["gap_ms"] is not None]
+    after_snap = [r["gap_ms"] for r in rows if r["gap_ms"] is not None and r["after_snapshot"]]
+    after_plain = [r["gap_ms"] for r in rows if r["gap_ms"] is not None and not r["after_snapshot"]]
     total_ms = sum(float(e["ms"]) for e in chunks)
     tokens = sum(int(e["end"]) - int(e["start"]) for e in chunks)
     out = {
@@ -145,6 +168,14 @@ def run_prefill(client: Client, words: int, arm: str) -> dict:
         "chunk_tokens": tokens,
         "chunk_ms_total": round(total_ms, 1),
         "in_chunk_tok_s": round(tokens / total_ms * 1000.0, 1) if total_ms else 0.0,
+        "gap_ms_total": round(sum(gaps), 1),
+        "gap_ms_median": round(statistics.median(gaps), 2) if gaps else 0.0,
+        "gap_after_snapshot_ms": round(statistics.median(after_snap), 2) if after_snap else 0.0,
+        "gap_after_plain_ms": round(statistics.median(after_plain), 2) if after_plain else 0.0,
+        "gap_fraction": round(sum(gaps) / (total_ms + sum(gaps)), 4) if total_ms else 0.0,
+        "end_to_end_tok_s": (
+            round(tokens / (total_ms + sum(gaps)) * 1000.0, 1) if total_ms else 0.0
+        ),
         "by_size": table,
     }
     if done:

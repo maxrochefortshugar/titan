@@ -349,3 +349,57 @@ def test_a_frozen_config_cannot_be_mutated():
     config = load(MINIMAL)
     with pytest.raises(dataclasses.FrozenInstanceError):
         config.server.port = 9000  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# ROUND5's three new knobs
+# ---------------------------------------------------------------------------
+
+
+def test_the_depth_policy_name_is_checked_at_parse_time():
+    with pytest.raises(ConfigError, match=r"speculation\.depth_policy"):
+        load(MINIMAL + "\n[speculation]\ndepth_policy = 'the_good_one'\n")
+    config = load(MINIMAL + "\n[speculation]\ndepth_policy = 'mean_accepted'\n")
+    assert config.speculation.depth_policy == "mean_accepted"
+
+
+def test_the_probe_duty_and_the_margin_are_checked():
+    with pytest.raises(ConfigError, match=r"speculation\.depth_probe_cycles"):
+        load(MINIMAL + "\n[speculation]\ndepth_probe_cycles = -1\n")
+    with pytest.raises(ConfigError, match=r"speculation\.depth_hysteresis"):
+        load(MINIMAL + "\n[speculation]\ndepth_hysteresis = -0.01\n")
+    # Zero is a configuration and not a mistake: it is the policy with no
+    # probing, which is the arm ROUND5 step 1 needs to price the duty against.
+    assert load(MINIMAL + "\n[speculation]\ndepth_probe_every = 0\n") is not None
+
+
+def test_an_op_cannot_be_prefill_only_and_disabled_at_once():
+    with pytest.raises(ConfigError, match="moe_gather_int8"):
+        load(
+            MINIMAL
+            + "\n[kernels]\nprefill_only = ['moe_gather_int8']\n"
+            + "disabled = ['moe_gather_int8']\n"
+        )
+
+
+def test_a_forward_path_cannot_be_asked_for_on_and_off():
+    with pytest.raises(ConfigError, match="qsa_pooled_bank_f32"):
+        load(
+            MINIMAL
+            + "\n[kernels]\nforward_paths_on = ['qsa_pooled_bank_f32']\n"
+            + "forward_paths_off = ['qsa_pooled_bank_f32']\n"
+        )
+
+
+def test_the_new_keys_survive_the_toml_round_trip():
+    config = load(
+        MINIMAL
+        + "\n[speculation]\ndepth_policy = 'mean_accepted'\ndepth_probe_every = 96\n"
+        + "\n[kernels]\nprefill_only = ['moe_gather_int8']\n"
+        + "forward_paths_on = ['qsa_pooled_bank_f32']\n"
+    )
+    again = load(config.dumps())
+    assert again.speculation.depth_policy == "mean_accepted"
+    assert again.speculation.depth_probe_every == 96
+    assert again.kernels.prefill_only == ("moe_gather_int8",)
+    assert again.kernels.forward_paths_on == ("qsa_pooled_bank_f32",)
