@@ -380,10 +380,22 @@ def load_model(
     mtp_depth: int = 3,
     fuse_gate_up: bool = True,
     strict: bool = True,
+    wait_for_memory: bool = True,
 ) -> tuple[Model, LoaderPlan]:
     """Build the model and bind the checkpoint. Loads the whole thing."""
     model_dir = Path(model_dir)
     from .checkpoint import checkpoint_mtp_weight_prefix
+
+    if wait_for_memory:
+        # Every real load goes through here, server or bench harness. macOS
+        # releases a dead process's image lazily, so a load started seconds
+        # after another model process exited can overlap two 73 GB images and
+        # swap the machine into a freeze (docs/ops/INCIDENTS.md). Wait for the
+        # headroom first; refuse after the timeout rather than start anyway.
+        from titan.observability.memory_guard import wait_for_headroom
+
+        need_gb = _checkpoint_size_gb(model_dir) + 8.0
+        wait_for_headroom(need_gb, timeout_s=180.0, log=logger.warning)
 
     prefix = checkpoint_mtp_weight_prefix(model_dir) if mtp_enabled else None
     config = build_config(
@@ -456,3 +468,14 @@ def fuse_switch_glu_modules(model) -> int:
         del module.up_proj
         count += 1
     return count
+
+
+def _checkpoint_size_gb(model_dir: Path) -> float:
+    """Sum of the safetensors shards, the memory a load will need."""
+    total = 0
+    for f in Path(model_dir).glob("*.safetensors"):
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return total / 1024 ** 3 if total else 75.0
