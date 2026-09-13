@@ -1,0 +1,38 @@
+{
+  "kind": "compiled_warm",
+  "layers": 4,
+  "length": 4000,
+  "islands": [
+    3
+  ],
+  "rows": [
+    {
+      "width": 1,
+      "capacity": 4096,
+      "first_ms": 100.97570799916866,
+      "second_ms": 12.069790998793906
+    },
+    {
+      "width": 2,
+      "capacity": 4096,
+      "first_ms": 6.915333000506507,
+      "second_ms": 2.8320419987721834
+    },
+    {
+      "width": 4,
+      "capacity": 4096,
+      "first_ms": 9.316042000136804,
+      "second_ms": 2.038041999185225
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "warmed": 3,
+    "skipped": 0,
+    "seconds": 0.13532950000080746,
+    "first_call_total_ms": 117.20708299981197,
+    "cached_call_median_ms": 2.8320419987721834,
+    "active_growth_mb": 2.1076488494873047,
+    "peak_mb": 4.7854461669921875
+  }
+}

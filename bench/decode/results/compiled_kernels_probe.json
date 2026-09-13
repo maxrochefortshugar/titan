@@ -1,0 +1,68 @@
+{
+  "kind": "compiled_kernels_probe",
+  "rows": [
+    {
+      "kernel": "hc_fused (norm + down/inject + up)",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.",
+      "note": "three mx.fast.metal_kernel launches, vendored qwen4_exp/hc_fused.py"
+    },
+    {
+      "kernel": "gdn_norm_gate",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.",
+      "note": "titan.kernels, fused grouped RMS norm and output gate"
+    },
+    {
+      "kernel": "gated_delta_kernel",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.",
+      "note": "vendored qwen3_5/gated_delta.py, the decode recurrence"
+    },
+    {
+      "kernel": "_mrope_apply_kernel",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.",
+      "note": "vendored rope_utils, the fused rotary application"
+    },
+    {
+      "kernel": "moe_weighted_sum",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.",
+      "note": "titan.kernels, the top-k unsort and routed weighted sum"
+    },
+    {
+      "kernel": "topk_radix",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.",
+      "note": "titan.kernels, three-launch radix top-K over one wide logits row"
+    },
+    {
+      "kernel": "verify_accept",
+      "traced_at_fixed_shapes": true,
+      "fixed_shape_error": "",
+      "shapeless_error": "ValueError: [Primitive::output_shapes] Slice cannot infer output shapes.",
+      "note": "titan.kernels; plain MLX ops today, the fused launch is a later change"
+    },
+    {
+      "kernel": "ple_packed_lookup",
+      "traced_at_fixed_shapes": false,
+      "fixed_shape_error": "not an MLX graph: reads rows from a packed table on SSD through an mmap and numpy, mid-forward",
+      "shapeless_error": "not attempted",
+      "note": "eager island (PLE layer)"
+    },
+    {
+      "kernel": "qsa_gathered_attention",
+      "traced_at_fixed_shapes": false,
+      "fixed_shape_error": "not a pure array function: QSAGeometry is built from int(cache.offset) and the pooled index bank's host-side lengths, offsets and phases, so the selection is host work by construction",
+      "shapeless_error": "not attempted",
+      "note": "eager island (sparse attention past the indexer budget)"
+    }
+  ]
+}

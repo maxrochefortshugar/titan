@@ -925,3 +925,68 @@ def test_a_single_graph_is_refused_past_the_indexer_budget(model, spec, language
     state.length = compiled_model.sparse_budget + 1
     with pytest.raises(ValueError, match="past the QSA indexer budget"):
         compiled_model(tokens(1, spec.vocab_size), state)
+
+
+# ---------------------------------------------------------------------------
+# generation 2 does not move generation 1
+# ---------------------------------------------------------------------------
+#
+# ``compiled.py`` grew a ``fused_kernels`` keyword on five builders and an
+# ``eager_indices`` keyword on two. Every one of them defaults off, so
+# everything above this line is a test of the generation 1 behaviour with the
+# generation 2 code in the tree. These four say so explicitly, because a
+# default that quietly changed would turn this whole file into a test of
+# something else. The generation 2 behaviour itself is
+# ``tests/model/test_compiled_kernels.py``, which runs on a bfloat16 model,
+# because in float32 not one of the fused kernels is eligible.
+
+
+def test_the_fused_kernel_keywords_default_off(model, language_model):
+    """The five builders, unchanged unless asked."""
+    layer = language_model.model.layers[0]
+    assert C.build_model(model).fused_kernels is False
+    assert C.build_model(model).island_indices == ()
+    _specs, arrays = C.gated_residual_weights(layer.attn_hyper_connection)
+    assert "hc_fused" not in arrays
+    assert "hc_plan" not in _specs
+    assert "hc_fused" not in C.layer_weights(layer)["attn_hc"]
+
+
+def test_the_plain_gated_residual_is_still_shapeless(model, language_model):
+    """One trace for every width, which is what generation 1 bought here.
+
+    A fused block cannot be shapeless -- a custom kernel has no inferable
+    output shape -- so the fused arm compiles per shape. The plain arm must not
+    follow it: on a model the kernels decline, and on a caller that did not ask
+    for them, the one-trace-for-every-width property is still the right one.
+    """
+    step = C.build_gated_residual(language_model.model.layers[0].attn_hyper_connection)
+    _specs, arrays = C.gated_residual_weights(
+        language_model.model.layers[0].attn_hyper_connection
+    )
+    C.eval_weights(arrays)
+    columns = int(language_model.model.layers[0].attn_hyper_connection.hc_count) * int(
+        language_model.model.layers[0].attn_hyper_connection.hidden_size
+    )
+    for width in (1, 4, 8):
+        out = step(mx.zeros((1, width, columns), mx.float32), arrays)
+        mx.eval(out)
+        assert out[0].shape[1] == width
+
+
+def test_new_state_still_marks_only_ple_layers_eager_by_default(model):
+    """``eager_indices`` is opt-in; without it the placeholder rule is the old one."""
+    state = C.new_state(model)
+    inner = model.language_model.model
+    for index, entry in enumerate(state.layers):
+        expected = C.EAGER if "ple" in inner.layers[index] else (
+            C.LINEAR if inner.layers[index].is_linear else C.ATTENTION
+        )
+        assert entry.kind == expected
+
+
+def test_new_state_takes_eager_indices_when_asked(model):
+    """Which is how generation 2 puts a sparse-attention layer on the eager side."""
+    state = C.new_state(model, eager_indices=[1])
+    assert state.layers[1].kind == C.EAGER
+    assert state.layers[1].arrays == ()

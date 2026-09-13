@@ -163,11 +163,41 @@ class CompiledArm:
             _restore_cache(self.model.eager_caches[index], saved)
 
 
-def make_arms(model, length: int, *, use_kernel: bool = True):
+def bf16_synthetic(spec: SyntheticSpec, seed: int = 0):
+    """The synthetic model in bfloat16, which is what the checkpoint is.
+
+    ``host_overhead.build_synthetic`` leaves the model in float32, and float32
+    is a configuration in which none of the fused decode kernels run:
+    ``hc_fused`` declines a non-bfloat16 norm weight by layout, and
+    ``gdn_norm_gate`` declines a float32 input by dtype. Measuring generation 2
+    against an eager arm that has no kernels in it would be measuring nothing,
+    and the numerics claim -- same kernels, same bits -- would have nothing to
+    check. So the model is cast, and the RMS norm scales are refolded because
+    the cast invalidates the ones ``build_synthetic`` prepared.
+
+    ``mamba_ssm_dtype`` is float32 in the config and stays float32: the cast
+    walks the parameters, and the recurrent state is allocated per step.
+    """
+    from titan.adapters.mlx.vendor.mlx_vlm.models.qwen4_exp.language import (
+        prepare_rmsnorm_scales,
+    )
+
+    model = build_synthetic(spec, seed=seed)
+    model.set_dtype(mx.bfloat16)
+    prepare_rmsnorm_scales(model)
+    mx.eval(model.parameters())
+    return model
+
+
+def make_arms(model, length: int, *, use_kernel: bool = True, gen2: bool = False):
     """Prefill once, then hand back an eager arm and a compiled arm at *length*.
 
     Both arms start from the same prefilled cache, so a difference between them
     is the decode step and not the prefix.
+
+    ``gen2`` builds the generation 2 compiled arm: the eager path's fused Metal
+    kernels inside the traces, and the layers that cannot hold one (PLE, and
+    sparse attention past the indexer budget) as eager islands between them.
     """
     language_model = getattr(model, "language_model", model)
     cache = language_model.make_cache()
@@ -181,13 +211,21 @@ def make_arms(model, length: int, *, use_kernel: bool = True):
         mx.eval(_cache_arrays(cache))
         done += piece
 
-    compiled_model = C.build_model(model, use_kernel=use_kernel)
+    if gen2:
+        # The build is for the length the decode starts at, plus the widest
+        # verify block, because that is what decides whether the sparse layers
+        # are inside the traces or beside them.
+        compiled_model = C.build_gen2(model, length=length + 8, use_kernel=use_kernel)
+    else:
+        compiled_model = C.build_model(model, use_kernel=use_kernel)
     C.eval_weights(compiled_model.weights)
     # The layers that cannot be traced keep their own vendored caches, and the
     # two arms must not share one: the compiled arm's eager layer would advance
     # the cache the eager arm is stepping from. So it gets a copy, prefilled to
     # the same length.
-    eager_ids = C.untraceable_layers(model)
+    eager_ids = (
+        list(compiled_model.island_indices) if gen2 else C.untraceable_layers(model)
+    )
     if eager_ids:
         copies = _clone_caches(language_model, cache)
         compiled_model.eager_caches = {index: copies[index] for index in eager_ids}
@@ -206,6 +244,7 @@ def make_arms(model, length: int, *, use_kernel: bool = True):
             state=state,
             snapshot=snapshot,
             eager_baseline=baseline,
+            name="gen2" if gen2 else "compiled",
         ),
     )
 
@@ -347,8 +386,14 @@ def _merge(first: dict, second: dict) -> dict:
 
 def cmd_synthetic(args) -> None:
     spec = SyntheticSpec(num_hidden_layers=args.layers)
-    model = build_synthetic(spec)
-    eager, compiled_arm = make_arms(model, args.context)
+    gen2 = getattr(args, "gen2", False)
+    # ``--bf16`` without ``--gen2`` is the middle arm of the three-way
+    # comparison: generation 1's compiled step on a model whose *eager* arm has
+    # the fused kernels in it. That is the arm that shows what generation 1
+    # gave away, which is the reason generation 2 exists.
+    bf16 = gen2 or getattr(args, "bf16", False)
+    model = bf16_synthetic(spec) if bf16 else build_synthetic(spec)
+    eager, compiled_arm = make_arms(model, args.context, gen2=gen2)
     vocab = spec.vocab_size
 
     rows = []
@@ -367,13 +412,18 @@ def cmd_synthetic(args) -> None:
 
     payload = {
         "kind": "compiled_synthetic",
+        "generation": 2 if gen2 else 1,
+        "dtype": "bfloat16" if bf16 else "float32",
+        "islands": list(compiled_arm.model.island_indices),
+        "fused_kernels": compiled_arm.model.fused_kernels,
         "layers": args.layers,
         "context": args.context,
         "repeats": args.repeats,
         "rows": rows,
     }
     _report(payload)
-    _write(payload, f"compiled_synthetic_{args.layers}L_{args.context}.json")
+    suffix = "_gen2" if gen2 else ("_gen1_bf16" if bf16 else "")
+    _write(payload, f"compiled_synthetic{suffix}_{args.layers}L_{args.context}.json")
 
 
 def cmd_cache(args) -> None:
@@ -454,6 +504,370 @@ def cmd_cache(args) -> None:
 
 
 
+def rotated(arms, tokens_, *, repeats: int, warmup: int, count_ops: bool):
+    """Measure every arm forwards and then backwards, and average the pair.
+
+    ``paired`` does A B B A for two arms; this is the same idea for three, so
+    the eager, generation 1 and generation 2 arms are measured inside one
+    process against one prefill. That matters more than it sounds on this
+    machine: the workbench beside it moves absolute step times by a factor of
+    three between runs, so a generation 1 number from one process and a
+    generation 2 number from another are not comparable, and the whole claim of
+    generation 2 is a comparison with generation 1.
+    """
+    forward = [
+        measure(arm, tokens_, repeats=repeats, warmup=warmup, count_ops=count_ops)
+        for arm in arms
+    ]
+    backward = {
+        arm.name: measure(arm, tokens_, repeats=repeats, warmup=0, count_ops=False)
+        for arm in reversed(arms)
+    }
+    return {row["arm"]: _merge(row, backward[row["arm"]]) for row in forward}
+
+
+def cmd_generations(args) -> None:
+    """Eager, generation 1 and generation 2, in one process on one prefill.
+
+    The table the generation 2 section of ``docs/architecture/COMPILED.md``
+    reports. The model is bfloat16 for all three arms, which is what makes the
+    eager arm the honest baseline: in float32 the eager arm has no fused
+    kernels in it and generation 1 looks fine.
+    """
+    spec = SyntheticSpec(num_hidden_layers=args.layers)
+    model = bf16_synthetic(spec)
+    eager, gen1 = make_arms(model, args.context, gen2=False)
+    _eager2, gen2 = make_arms(model, args.context, gen2=True)
+    arms = [eager, gen1, gen2]
+    if gen1.model.sparse_budget and args.context >= gen1.model.sparse_budget:
+        # Generation 1 refuses a length past the indexer budget, by design and
+        # for a good reason -- a dense trace there attends to keys the eager
+        # path drops. So past the budget there are two arms, not three, and the
+        # missing one is the point rather than a gap in the measurement.
+        print(
+            f"\ncontext {args.context} is past the indexer budget "
+            f"{gen1.model.sparse_budget}: the generation 1 arm refuses it, so "
+            "this run is eager against generation 2 only"
+        )
+        arms = [eager, gen2]
+
+    rows = []
+    for width in args.widths:
+        ids = _tokens(width, spec.vocab_size)
+        result = rotated(
+            arms,
+            ids,
+            repeats=args.repeats,
+            warmup=args.warmup,
+            count_ops=True,
+        )
+        result["width"] = width
+        rows.append(result)
+
+    payload = {
+        "kind": "compiled_generations",
+        "layers": args.layers,
+        "context": args.context,
+        "repeats": args.repeats,
+        "dtype": "bfloat16",
+        "gen2_islands": list(gen2.model.island_indices),
+        "rows": rows,
+    }
+    header = (
+        f"{'width':>6} {'arm':>10} {'ops':>7} {'build ms':>9} "
+        f"{'step ms':>9} {'gpu ms':>8} {'vs eager':>9}"
+    )
+    print(f"\ncontext {args.context}, {args.layers} layers, bfloat16")
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        base = row["eager"]["step_ms"]
+        for name in ("eager", "compiled", "gen2"):
+            entry = row.get(name)
+            if entry is None:
+                continue
+            delta = 100 * (entry["step_ms"] - base) / base
+            print(
+                f"{row['width']:>6} {name:>10} {entry['ops']:>7} "
+                f"{entry['build_ms']:>9.2f} {entry['step_ms']:>9.2f} "
+                f"{entry['gpu_ms']:>8.2f} {delta:>8.1f}%"
+            )
+    _write(payload, f"compiled_generations_{args.layers}L_{args.context}.json")
+
+
+def cmd_layout(args) -> None:
+    """Traces and islands for a checkpoint's layer layout, from its config.
+
+    No model is loaded and no GPU is touched: the answer is a function of
+    ``layer_types``, ``ple_layer_ids`` and ``indexer_budget``, all of which are
+    in ``config.json``. That matters because the checkpoint is 70 GB and one
+    process at a time.
+    """
+    config = json.loads(Path(args.config).expanduser().read_text())
+    text = config.get("text_config", config)
+    layer_types = text["layer_types"]
+    ple = text.get("ple_layer_ids", []) or []
+    budget = int(text.get("indexer_budget", 0) or 0)
+    widths = args.widths
+    print(f"{len(layer_types)} layers, indexer budget {budget}, PLE at {list(ple)}")
+    print(
+        f"{'context':>9} {'islands':>8} {'segments':>9} {'cap in key':>11} "
+        f"{'traces':>7}"
+    )
+    rows = []
+    for context in args.contexts:
+        plan = C.plan_layout(
+            layer_types=layer_types,
+            ple_layer_ids=ple,
+            length=context,
+            indexer_budget=budget,
+        )
+        buckets = C.capacity_buckets(up_to=C.capacity_for(context + max(widths)))
+        traces = plan.traces(widths, buckets)
+        rows.append(
+            {
+                "context": context,
+                "islands": list(plan.islands),
+                "segments": [list(s) for s in plan.segments],
+                "capacity_in_trace_key": plan.capacity_in_trace_key,
+                "capacity_buckets": buckets,
+                "traces": traces,
+            }
+        )
+        print(
+            f"{context:>9} {plan.island_count:>8} {plan.segment_count:>9} "
+            f"{str(plan.capacity_in_trace_key):>11} {traces:>7}"
+        )
+    payload = {
+        "kind": "compiled_layout",
+        "config": str(args.config),
+        "layers": len(layer_types),
+        "indexer_budget": budget,
+        "ple_layer_ids": list(ple),
+        "widths": list(widths),
+        "rows": rows,
+    }
+    _write(payload, "compiled_layout.json")
+
+
+def cmd_kernels(args) -> None:
+    """Which custom kernels trace as opaque nodes, and what the others say.
+
+    One row per kernel the decode path can reach, with the shapeless error
+    verbatim where there is one. This is the table in the generation 2 section
+    of COMPILED.md, generated rather than remembered, because an MLX error
+    message is a fact about a version.
+    """
+    from titan.adapters.mlx import compiled_kernels as CK
+    from titan.adapters.mlx.vendor.mlx_lm.models.gated_delta import gated_delta_kernel
+    from titan.adapters.mlx.vendor.mlx_vlm.models.rope_utils import (
+        _fast_mrope_apply,
+        _mrope_apply_kernel,
+    )
+    from titan.kernels import gdn_norm_gate as _gng
+    from titan.kernels import moe_weighted_sum as _mws
+
+    spec = SyntheticSpec(num_hidden_layers=4)
+    model = bf16_synthetic(spec)
+    inner = getattr(model, "language_model", model).model
+    rows = []
+
+    def record(name, fn, args_tuple, note=""):
+        try:
+            mx.eval(mx.compile(fn)(*args_tuple))
+            fixed, fixed_error = True, ""
+        except Exception as exc:  # noqa: BLE001 - the message is the result
+            fixed, fixed_error = False, f"{type(exc).__name__}: {exc}"
+        shapeless_error = (
+            CK.opaque_under_shapeless(fn, *args_tuple) if fixed else "not attempted"
+        )
+        rows.append(
+            {
+                "kernel": name,
+                "traced_at_fixed_shapes": fixed,
+                "fixed_shape_error": fixed_error,
+                "shapeless_error": shapeless_error or "",
+                "note": note,
+            }
+        )
+
+    # hc_fused: the three kernels of the hyper-connection block
+    hc = inner.layers[0].attn_hyper_connection
+    plan = CK.hc_fused_plan(hc)
+    arrays = CK.hc_fused_arrays(hc)
+    mx.eval([a for v in arrays.values() for a in (v if isinstance(v, tuple) else (v,))])
+    x = mx.zeros((1, 4, hc.hc_count * hc.hidden_size), mx.bfloat16)
+    record(
+        "hc_fused (norm + down/inject + up)",
+        lambda xx, aa: CK.hc_fused_body(xx, aa, plan),
+        (x, arrays),
+        "three mx.fast.metal_kernel launches, vendored qwen4_exp/hc_fused.py",
+    )
+
+    # gdn_norm_gate
+    gdn = inner.layers[0].linear_attn
+    heads, dim = gdn.num_v_heads, gdn.head_v_dim
+    xg = mx.zeros((1, 4, heads, dim), mx.bfloat16)
+    gg = mx.zeros((1, 4, heads, dim), mx.bfloat16)
+    wg = mx.ones((dim,), mx.bfloat16)
+    record(
+        "gdn_norm_gate",
+        lambda a, b, c: _gng.metal(a, b, c, eps=1e-6, activation=0),
+        (xg, gg, wg),
+        "titan.kernels, fused grouped RMS norm and output gate",
+    )
+
+    # the gated delta recurrence
+    q = mx.zeros((1, 4, gdn.num_k_heads, gdn.head_k_dim), mx.bfloat16)
+    k = mx.zeros((1, 4, gdn.num_k_heads, gdn.head_k_dim), mx.bfloat16)
+    v = mx.zeros((1, 4, heads, dim), mx.bfloat16)
+    g = mx.zeros((1, 4, heads), mx.float32)
+    beta = mx.zeros((1, 4, heads), mx.bfloat16)
+    ssm = mx.zeros((1, heads, dim, gdn.head_k_dim), mx.float32)
+    record(
+        "gated_delta_kernel",
+        lambda *a: gated_delta_kernel(*a, None),
+        (q, k, v, g, beta, ssm),
+        "vendored qwen3_5/gated_delta.py, the decode recurrence",
+    )
+
+    # the mrope application
+    attn = None
+    for layer in inner.layers:
+        if not layer.is_linear:
+            attn = layer.self_attn
+            break
+    if attn is not None:
+        rope = attn.rotary_emb
+        rk = _mrope_apply_kernel(rope.dim, 2, rope.pairing)
+        heads_q = attn.num_attention_heads
+        kvh = attn.num_key_value_heads
+        hd = attn.head_dim
+        qq = mx.zeros((1, heads_q, 4, hd), mx.bfloat16)
+        kk = mx.zeros((1, kvh, 4, hd), mx.bfloat16)
+        pos = mx.zeros((1, 4), mx.int32)
+        selector = rope.position_selector
+        selector = selector if selector is not None else mx.zeros((1,), mx.int32)
+        if rk is not None:
+            record(
+                "_mrope_apply_kernel",
+                lambda a, b, c, d, e: _fast_mrope_apply(rk, a, b, c, d, e),
+                (qq, kk, pos, rope.inv_freq, selector),
+                "vendored rope_utils, the fused rotary application",
+            )
+
+    # the MoE weighted sum
+    y = mx.zeros((1, 4, spec.num_experts_per_tok, spec.hidden_size), mx.bfloat16)
+    scores = mx.zeros((1, 4, spec.num_experts_per_tok), mx.float32)
+    record(
+        "moe_weighted_sum",
+        lambda a, b: _mws.metal(a, None, b, (1, 4, spec.hidden_size)),
+        (y, scores),
+        "titan.kernels, the top-k unsort and routed weighted sum",
+    )
+
+    # The verify block's two ops. They are outside the layer traces, but the
+    # goal is a compiled decode *and verify* step, so whether they trace is
+    # part of the answer.
+    from titan.kernels import topk_radix as _tk
+    from titan.kernels import verify_accept as _va
+
+    logits_row = mx.zeros((1, spec.vocab_size), mx.float32)
+    record(
+        "topk_radix",
+        lambda a: _tk.metal(a, 10),
+        (logits_row,),
+        "titan.kernels, three-launch radix top-K over one wide logits row",
+    )
+    vlogits = mx.zeros((1, 4, spec.vocab_size), mx.float32)
+    drafted = mx.zeros((1, 3), mx.int32)
+    record(
+        "verify_accept",
+        lambda a, b: _va.fast(a, b),
+        (vlogits, drafted),
+        "titan.kernels; plain MLX ops today, the fused launch is a later change",
+    )
+
+    # Two that are not traceable by construction rather than by an MLX error,
+    # which is why they are islands rather than nodes.
+    rows.append(
+        {
+            "kernel": "ple_packed_lookup",
+            "traced_at_fixed_shapes": False,
+            "fixed_shape_error": "not an MLX graph: reads rows from a packed "
+            "table on SSD through an mmap and numpy, mid-forward",
+            "shapeless_error": "not attempted",
+            "note": "eager island (PLE layer)",
+        }
+    )
+    rows.append(
+        {
+            "kernel": "qsa_gathered_attention",
+            "traced_at_fixed_shapes": False,
+            "fixed_shape_error": "not a pure array function: QSAGeometry is "
+            "built from int(cache.offset) and the pooled index bank's host-side "
+            "lengths, offsets and phases, so the selection is host work by "
+            "construction",
+            "shapeless_error": "not attempted",
+            "note": "eager island (sparse attention past the indexer budget)",
+        }
+    )
+
+    width = max(len(row["kernel"]) for row in rows)
+    print(f"\n{'kernel':<{width}}  {'fixed':>5}  shapeless")
+    for row in rows:
+        mark = "yes" if row["traced_at_fixed_shapes"] else "NO"
+        print(f"{row['kernel']:<{width}}  {mark:>5}  {row['shapeless_error']}")
+        if row["fixed_shape_error"]:
+            print(f"{'':<{width}}         fixed-shape error: {row['fixed_shape_error']}")
+    payload = {"kind": "compiled_kernels_probe", "rows": rows}
+    _write(payload, "compiled_kernels_probe.json")
+
+
+def cmd_warm(args) -> None:
+    """What warming the (width, capacity) grid costs, and what it holds."""
+    spec = SyntheticSpec(num_hidden_layers=args.layers)
+    model = bf16_synthetic(spec)
+    compiled_model = C.build_gen2(model, length=args.length)
+    C.eval_weights(compiled_model.weights)
+    capacities = args.capacities or C.capacity_buckets(up_to=args.up_to)
+    report = C.warm_traces(
+        compiled_model,
+        widths=args.widths,
+        capacities=capacities,
+        budget_seconds=args.budget_seconds,
+        budget_mb=args.budget_mb,
+        vocab=spec.vocab_size,
+    )
+    print(
+        f"\nwarmed {report.warmed} grid points in {report.seconds:.2f} s, "
+        f"{len(report.skipped)} skipped"
+    )
+    print(f"{'width':>6} {'capacity':>9} {'first ms':>9} {'cached ms':>10}")
+    for row in report.rows:
+        print(
+            f"{row['width']:>6} {row['capacity']:>9} {row['first_ms']:>9.2f} "
+            f"{row['second_ms']:>10.2f}"
+        )
+    summary = report.summary()
+    print(
+        f"\nfirst-call total {summary['first_call_total_ms']:.1f} ms, "
+        f"cached-call median {summary['cached_call_median_ms']:.2f} ms, "
+        f"active memory grew {summary['active_growth_mb']:.1f} MB, "
+        f"peak {summary['peak_mb']:.1f} MB"
+    )
+    payload = {
+        "kind": "compiled_warm",
+        "layers": args.layers,
+        "length": args.length,
+        "islands": list(compiled_model.island_indices),
+        "rows": report.rows,
+        "skipped": report.skipped,
+        "summary": summary,
+    }
+    _write(payload, f"compiled_warm_{args.layers}L.json")
+
+
 def _timed_call(compiled_model, tokens, state) -> tuple[float, float]:
     """Host build time and end-to-end time for one call of the model step.
 
@@ -479,9 +893,10 @@ def cmd_real(args) -> None:
     """The checkpoint arm. One sync per step, no per-scope evaluation."""
     from titan.adapters.mlx import loader
 
+    gen2 = getattr(args, "gen2", False)
     model, _plan = loader.load_model(Path(args.model).expanduser())
     for context in args.contexts:
-        eager, compiled_arm = make_arms(model, context)
+        eager, compiled_arm = make_arms(model, context, gen2=gen2)
         vocab = int(getattr(model, "language_model", model).args.vocab_size)
         rows = []
         for width in args.widths:
@@ -498,13 +913,17 @@ def cmd_real(args) -> None:
             rows.append(result)
         payload = {
             "kind": "compiled_real",
+            "generation": 2 if gen2 else 1,
             "model": str(args.model),
             "context": context,
             "repeats": args.repeats,
+            "islands": list(compiled_arm.model.island_indices),
+            "fused_kernels": compiled_arm.model.fused_kernels,
             "rows": rows,
         }
         _report(payload)
-        _write(payload, f"compiled_real_{context}.json")
+        suffix = "_gen2" if gen2 else ""
+        _write(payload, f"compiled_real{suffix}_{context}.json")
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +943,7 @@ def _report(payload: dict) -> None:
         for name in ("eager", "compiled"):
             entry = row[name]
             print(
-                f"{row['width']:>6} {name:>10} {entry['ops']:>7} "
+                f"{row['width']:>6} {entry.get('arm', name):>10} {entry['ops']:>7} "
                 f"{entry['build_ms']:>9.2f} {entry['step_ms']:>9.2f} "
                 f"{entry['gpu_ms']:>8.2f}"
             )
@@ -559,7 +978,55 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     synthetic.add_argument("--widths", type=_int_list, default=[1, 4])
     synthetic.add_argument("--repeats", type=int, default=12)
     synthetic.add_argument("--warmup", type=int, default=3)
+    synthetic.add_argument(
+        "--gen2",
+        action="store_true",
+        help="generation 2: fused kernels inside the traces, eager islands "
+        "around them, and a bfloat16 synthetic model so the eager arm has the "
+        "kernels in it too",
+    )
+    synthetic.add_argument(
+        "--bf16",
+        action="store_true",
+        help="cast the synthetic model to bfloat16 without turning generation "
+        "2 on, so a generation 1 arm can be measured against an eager arm that "
+        "has the fused kernels in it",
+    )
     synthetic.set_defaults(func=cmd_synthetic)
+
+    generations = sub.add_parser(
+        "generations",
+        help="eager, generation 1 and generation 2 in one process, bfloat16",
+    )
+    generations.add_argument("--layers", type=int, default=24)
+    generations.add_argument("--context", type=int, default=600)
+    generations.add_argument("--widths", type=_int_list, default=[1, 4])
+    generations.add_argument("--repeats", type=int, default=16)
+    generations.add_argument("--warmup", type=int, default=3)
+    generations.set_defaults(func=cmd_generations)
+
+    layout = sub.add_parser(
+        "layout", help="traces and islands from a config.json; loads nothing"
+    )
+    layout.add_argument("--config", required=True)
+    layout.add_argument("--contexts", type=_int_list, default=[600, 2048, 64000])
+    layout.add_argument("--widths", type=_int_list, default=[1, 2, 3, 4, 5, 6, 7, 8])
+    layout.set_defaults(func=cmd_layout)
+
+    kernels = sub.add_parser(
+        "kernels", help="which custom kernels trace as opaque nodes, and the errors"
+    )
+    kernels.set_defaults(func=cmd_kernels)
+
+    warm = sub.add_parser("warm", help="the trace cache: grid warm cost and memory")
+    warm.add_argument("--layers", type=int, default=24)
+    warm.add_argument("--length", type=int, default=600)
+    warm.add_argument("--widths", type=_int_list, default=[1, 2, 3, 4, 5, 6, 7, 8])
+    warm.add_argument("--capacities", type=_int_list, default=None)
+    warm.add_argument("--up-to", type=int, default=8192)
+    warm.add_argument("--budget-seconds", type=float, default=120.0)
+    warm.add_argument("--budget-mb", type=float, default=2048.0)
+    warm.set_defaults(func=cmd_warm)
 
     cache = sub.add_parser("cache", help="compile cost and cache behaviour")
     cache.add_argument("--layers", type=int, default=24)
@@ -577,6 +1044,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     real.add_argument("--repeats", type=int, default=20)
     real.add_argument("--warmup", type=int, default=3)
     real.add_argument("--ops", action="store_true", help="count graph primitives too")
+    real.add_argument(
+        "--gen2",
+        action="store_true",
+        help="generation 2: fused kernels inside the traces, eager islands "
+        "for the PLE layer and for the sparse-attention layers past the "
+        "indexer budget",
+    )
     real.set_defaults(func=cmd_real)
 
     args = parser.parse_args(argv)

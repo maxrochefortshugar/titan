@@ -1,0 +1,258 @@
+{
+  "kind": "compiled_warm",
+  "layers": 24,
+  "length": 600,
+  "islands": [],
+  "rows": [
+    {
+      "width": 1,
+      "capacity": 256,
+      "first_ms": 23.77849999902537,
+      "second_ms": 4.772874999616761
+    },
+    {
+      "width": 2,
+      "capacity": 256,
+      "first_ms": 91.36970899999142,
+      "second_ms": 5.352750002202811
+    },
+    {
+      "width": 3,
+      "capacity": 256,
+      "first_ms": 70.63195799855748,
+      "second_ms": 5.585415998211829
+    },
+    {
+      "width": 4,
+      "capacity": 256,
+      "first_ms": 14.015000000654254,
+      "second_ms": 5.7716249975783285
+    },
+    {
+      "width": 5,
+      "capacity": 256,
+      "first_ms": 71.21245800226461,
+      "second_ms": 5.936624998867046
+    },
+    {
+      "width": 6,
+      "capacity": 256,
+      "first_ms": 70.76333299846738,
+      "second_ms": 6.408249999367399
+    },
+    {
+      "width": 7,
+      "capacity": 256,
+      "first_ms": 74.80750000104308,
+      "second_ms": 5.419541001174366
+    },
+    {
+      "width": 8,
+      "capacity": 256,
+      "first_ms": 24.12779199949,
+      "second_ms": 4.494332999456674
+    },
+    {
+      "width": 1,
+      "capacity": 512,
+      "first_ms": 11.52587500109803,
+      "second_ms": 4.369416001281934
+    },
+    {
+      "width": 2,
+      "capacity": 512,
+      "first_ms": 11.601583999436116,
+      "second_ms": 4.445624999789288
+    },
+    {
+      "width": 3,
+      "capacity": 512,
+      "first_ms": 11.635707996902056,
+      "second_ms": 4.457541999727255
+    },
+    {
+      "width": 4,
+      "capacity": 512,
+      "first_ms": 11.71624999915366,
+      "second_ms": 4.339833001722582
+    },
+    {
+      "width": 5,
+      "capacity": 512,
+      "first_ms": 11.77191700116964,
+      "second_ms": 4.553917002340313
+    },
+    {
+      "width": 6,
+      "capacity": 512,
+      "first_ms": 11.687916001392296,
+      "second_ms": 4.485292000026675
+    },
+    {
+      "width": 7,
+      "capacity": 512,
+      "first_ms": 12.128624999604654,
+      "second_ms": 4.2640419997042045
+    },
+    {
+      "width": 8,
+      "capacity": 512,
+      "first_ms": 11.858165999001358,
+      "second_ms": 4.467500002647284
+    },
+    {
+      "width": 1,
+      "capacity": 1024,
+      "first_ms": 11.431124999944586,
+      "second_ms": 4.399542001920054
+    },
+    {
+      "width": 2,
+      "capacity": 1024,
+      "first_ms": 11.486666997370776,
+      "second_ms": 4.550749999907566
+    },
+    {
+      "width": 3,
+      "capacity": 1024,
+      "first_ms": 11.713874999259133,
+      "second_ms": 4.395417003252078
+    },
+    {
+      "width": 4,
+      "capacity": 1024,
+      "first_ms": 12.13370899859001,
+      "second_ms": 4.410957997606602
+    },
+    {
+      "width": 5,
+      "capacity": 1024,
+      "first_ms": 11.908208998647751,
+      "second_ms": 4.672499999287538
+    },
+    {
+      "width": 6,
+      "capacity": 1024,
+      "first_ms": 12.465749998227693,
+      "second_ms": 4.91554099789937
+    },
+    {
+      "width": 7,
+      "capacity": 1024,
+      "first_ms": 12.226499999087537,
+      "second_ms": 4.837832999328384
+    },
+    {
+      "width": 8,
+      "capacity": 1024,
+      "first_ms": 12.502625002525747,
+      "second_ms": 4.809124999155756
+    },
+    {
+      "width": 1,
+      "capacity": 2048,
+      "first_ms": 12.260542000149144,
+      "second_ms": 4.3600830031209625
+    },
+    {
+      "width": 2,
+      "capacity": 2048,
+      "first_ms": 12.317374999838648,
+      "second_ms": 4.612791999534238
+    },
+    {
+      "width": 3,
+      "capacity": 2048,
+      "first_ms": 12.545250003313413,
+      "second_ms": 4.673625000577886
+    },
+    {
+      "width": 4,
+      "capacity": 2048,
+      "first_ms": 12.436332999641309,
+      "second_ms": 4.797082998265978
+    },
+    {
+      "width": 5,
+      "capacity": 2048,
+      "first_ms": 12.599957997736055,
+      "second_ms": 4.9046249987441115
+    },
+    {
+      "width": 6,
+      "capacity": 2048,
+      "first_ms": 12.672749999182997,
+      "second_ms": 4.932207997626392
+    },
+    {
+      "width": 7,
+      "capacity": 2048,
+      "first_ms": 12.429458998667542,
+      "second_ms": 5.0901249996968545
+    },
+    {
+      "width": 8,
+      "capacity": 2048,
+      "first_ms": 12.667750001128297,
+      "second_ms": 5.008416002965532
+    },
+    {
+      "width": 1,
+      "capacity": 4096,
+      "first_ms": 11.857917001179885,
+      "second_ms": 4.360667000582907
+    },
+    {
+      "width": 2,
+      "capacity": 4096,
+      "first_ms": 12.50958300079219,
+      "second_ms": 4.902500000753207
+    },
+    {
+      "width": 3,
+      "capacity": 4096,
+      "first_ms": 12.511375000030966,
+      "second_ms": 5.096125001728069
+    },
+    {
+      "width": 4,
+      "capacity": 4096,
+      "first_ms": 12.462708000384737,
+      "second_ms": 5.132375001267064
+    },
+    {
+      "width": 5,
+      "capacity": 4096,
+      "first_ms": 12.84233299884363,
+      "second_ms": 5.103041999973357
+    },
+    {
+      "width": 6,
+      "capacity": 4096,
+      "first_ms": 12.905584000691306,
+      "second_ms": 5.0542079989099875
+    },
+    {
+      "width": 7,
+      "capacity": 4096,
+      "first_ms": 12.647040999581804,
+      "second_ms": 5.018582996854093
+    },
+    {
+      "width": 8,
+      "capacity": 4096,
+      "first_ms": 12.971042000572197,
+      "second_ms": 5.136291998496745
+    }
+  ],
+  "skipped": [],
+  "summary": {
+    "warmed": 40,
+    "skipped": 0,
+    "seconds": 1.0448191660034354,
+    "first_call_total_ms": 831.1377509926388,
+    "cached_call_median_ms": 4.803103998710867,
+    "active_growth_mb": 8.13766098022461,
+    "peak_mb": 23.517230987548828
+  }
+}

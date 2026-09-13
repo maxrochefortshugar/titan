@@ -111,7 +111,14 @@ __all__ = [
     "CompiledModel",
     "DecodeState",
     "LayerState",
+    "LayoutPlan",
     "LinearSpec",
+    "WarmReport",
+    "build_gen2",
+    "capacity_buckets",
+    "island_layers",
+    "plan_layout",
+    "warm_traces",
     "build_attention_step",
     "build_gdn_step",
     "build_gated_residual",
@@ -330,7 +337,13 @@ def gdn_weights(module: nn.Module) -> dict[str, Any]:
     return specs, arrays
 
 
-def build_gdn_step(module: nn.Module, *, use_kernel: bool = True, compiled: bool = True):
+def build_gdn_step(
+    module: nn.Module,
+    *,
+    use_kernel: bool = True,
+    compiled: bool = True,
+    fused_kernels: bool = False,
+):
     """``(x, conv_state, ssm_state, weights) -> (y, conv_state, ssm_state)``.
 
     One compiled graph for the whole linear-attention branch: the four input
@@ -340,6 +353,13 @@ def build_gdn_step(module: nn.Module, *, use_kernel: bool = True, compiled: bool
     Not shapeless. ``gated_delta_kernel`` is a ``mx.fast.metal_kernel`` and a
     custom kernel cannot infer output shapes under a shapeless trace, so this
     specialises per width. Widths 1..8 are eight traces.
+
+    ``fused_kernels`` is generation 2: the gated output norm goes through
+    ``gdn_norm_gate``, the fused Metal launch the eager
+    ``Qwen4ExpRMSNormGated`` takes, rather than the ``rms_norm`` plus cast plus
+    sigmoid plus multiply the ops form spells. The eager site declines a single
+    row, so this declines width one for the same reason: bit-identity with
+    eager means taking the kernel exactly where eager takes it.
     """
     specs, _ = gdn_weights(module)
     static = GDNStatic(
@@ -357,6 +377,12 @@ def build_gdn_step(module: nn.Module, *, use_kernel: bool = True, compiled: bool
         use_kernel=use_kernel and mx.metal.is_available(),
     )
     recurrence = gated_delta_kernel if static.use_kernel else gated_delta_ops
+    # Resolved once, here, exactly as the eager site resolves it. ``None`` when
+    # the registry is in ``reference_only`` or the op is disabled, which is
+    # what makes the compiled path's control arm the server's control arm.
+    norm_gate_op = (
+        _titan_op("gdn.norm_gate_fused") if fused_kernels else None
+    )
 
     def step(x, conv_state, ssm_state, weights):
         batch, width, _ = x.shape
@@ -393,14 +419,31 @@ def build_gdn_step(module: nn.Module, *, use_kernel: bool = True, compiled: bool
         beta = mx.sigmoid(b)
         out, ssm_state = recurrence(q, k, v, g, beta, ssm_state, None)
 
-        y = mx.fast.rms_norm(out, weights["norm"], static.eps).astype(mx.float32)
-        gate = z.astype(mx.float32)
-        gate = (
-            mx.sigmoid(gate)
-            if static.gate_activation == "sigmoid"
-            else nn.silu(gate)
-        )
-        y = (y * gate).astype(out.dtype)
+        # The eager ``Qwen4ExpRMSNormGated`` takes the fused kernel at more
+        # than one row and the ops below at one row; both are the same bits.
+        if (
+            norm_gate_op is not None
+            and batch * width > 1
+            and out.dtype in (mx.bfloat16, mx.float16)
+            and z.shape == out.shape
+            and z.dtype == out.dtype
+        ):
+            y = norm_gate_op(
+                out,
+                z,
+                weights["norm"].astype(out.dtype),
+                eps=static.eps,
+                activation=0 if static.gate_activation == "sigmoid" else 1,
+            )
+        else:
+            y = mx.fast.rms_norm(out, weights["norm"], static.eps).astype(mx.float32)
+            gate = z.astype(mx.float32)
+            gate = (
+                mx.sigmoid(gate)
+                if static.gate_activation == "sigmoid"
+                else nn.silu(gate)
+            )
+            y = (y * gate).astype(out.dtype)
 
         y = call_linear(
             specs["out_proj"], weights["out_proj"], y.reshape(batch, width, -1)
@@ -553,7 +596,44 @@ def build_moe_step(module: nn.Module, *, compiled: bool = True):
 # ---------------------------------------------------------------------------
 
 
-def gated_residual_weights(module: nn.Module) -> tuple[dict, dict]:
+def _compiled_kernels():
+    """``titan.adapters.mlx.compiled_kernels``, imported late.
+
+    Late because that module imports the vendored ``hc_fused`` for its Metal
+    sources, and this module is imported by the vendored decoder layer. A
+    module-level import would close the circle.
+    """
+    from . import compiled_kernels
+
+    return compiled_kernels
+
+
+def _hc_fused_takes(hyper_input: mx.array) -> bool:
+    """Whether the three ``hc_fused`` kernels take this concrete input.
+
+    The row bound and the dtype, which is everything ``hc_fused.compatible``
+    checks that a build-time plan cannot. Inside a per-shape trace the shape is
+    a Python tuple, so this is a Python branch resolved when the trace is
+    taken, not a branch on an array.
+    """
+    ck = _compiled_kernels()
+    if hyper_input.ndim != 3 or hyper_input.dtype != mx.bfloat16:
+        return False
+    rows = hyper_input.shape[0] * hyper_input.shape[1]
+    return 1 <= rows <= ck.HC_MAX_ROWS
+
+
+def gated_residual_weights(
+    module: nn.Module, *, fused_kernels: bool = False
+) -> tuple[dict, dict]:
+    """The static half and the array half of one ``Qwen4ExpGatedResidual``.
+
+    ``fused_kernels`` adds the arrays the three ``hc_fused`` Metal kernels take
+    (raw norm weight, the epsilon array, the packed quantised projections) on
+    top of the ones the ops form takes. Both sets travel, because a layer built
+    for the fused kernels still composes the ops form for any width the kernels
+    decline; see the generation 2 section of COMPILED.md.
+    """
     specs: dict[str, Any] = {}
     arrays: dict[str, Any] = {}
     fused = getattr(module, "input_inject_weight", None) is not None
@@ -571,10 +651,17 @@ def gated_residual_weights(module: nn.Module) -> tuple[dict, dict]:
         specs[name] = spec
         arrays[name] = values
     arrays["hc_norm"] = _norm_scale(module.hc_norm)
+    if fused_kernels:
+        plan = _compiled_kernels().hc_fused_plan(module)
+        specs["hc_plan"] = plan
+        if plan is not None:
+            arrays["hc_fused"] = _compiled_kernels().hc_fused_arrays(module)
     return specs, arrays
 
 
-def build_gated_residual(module: nn.Module, *, compiled: bool = True):
+def build_gated_residual(
+    module: nn.Module, *, compiled: bool = True, fused_kernels: bool = False
+):
     """``(hyper_input, weights) -> mixed`` or ``(mixed, hyper_input, gates)``.
 
     This is ``Qwen4ExpGatedResidual._forward`` written functionally. The
@@ -591,8 +678,19 @@ def build_gated_residual(module: nn.Module, *, compiled: bool = True):
 
     Shapeless: this block is projections, elementwise arithmetic, a mean and
     reshapes, all of which infer shapes. One trace serves every width.
+
+    ``fused_kernels`` is generation 2. It calls the same three ``hc_fused``
+    Metal kernels the eager path calls, as opaque nodes inside the trace, for
+    every width those kernels take. That gives up shapelessness -- a custom
+    kernel cannot infer output shapes -- which is the trade the generation 2
+    section of COMPILED.md is about: one trace per width against ninety-six
+    fused blocks a step that generation 1 was computing out of plain ops.
+    Widths the kernels decline (above sixteen rows, or a layout with a merged
+    input projection) fall back to the ops form at *trace* time, so a compiled
+    step never silently changes which arithmetic it runs.
     """
-    specs, _ = gated_residual_weights(module)
+    specs, _ = gated_residual_weights(module, fused_kernels=fused_kernels)
+    hc_plan = specs.get("hc_plan")
     hc_count = int(module.hc_count)
     hidden_size = int(module.hidden_size)
     hc_lowrank = int(module.hc_lowrank)
@@ -601,6 +699,10 @@ def build_gated_residual(module: nn.Module, *, compiled: bool = True):
     fused = specs["fused_inject"]
 
     def step(hyper_input, weights):
+        if hc_plan is not None and _hc_fused_takes(hyper_input):
+            return _compiled_kernels().hc_fused_body(
+                hyper_input, weights["hc_fused"], hc_plan
+            )
         normed = _rms_norm(hyper_input, weights["hc_norm"], eps, hidden_size)
         if fused:
             combined = call_linear(
@@ -634,7 +736,13 @@ def build_gated_residual(module: nn.Module, *, compiled: bool = True):
             return mixed_input
         return mixed_input, hyper_input, 2 * mx.sigmoid(block_injection / hc_count)
 
-    return mx.compile(step, shapeless=True) if compiled else step
+    if not compiled:
+        return step
+    # A fused block holds custom kernels, which have no shapeless trace. That
+    # is not a loss here: this function is composed *into* a layer trace, which
+    # is per-shape anyway because the Gated DeltaNet recurrence and the rotary
+    # application are custom kernels too.
+    return mx.compile(step, shapeless=hc_plan is None)
 
 
 def hyper_inject_body(
@@ -928,11 +1036,15 @@ class CompiledLayer:
     module: Any = None
 
 
-def layer_weights(layer: nn.Module) -> dict[str, Any]:
+def layer_weights(layer: nn.Module, *, fused_kernels: bool = False) -> dict[str, Any]:
     """Every array :func:`build_layer` needs, in one pytree."""
     weights: dict[str, Any] = {
-        "attn_hc": gated_residual_weights(layer.attn_hyper_connection)[1],
-        "mlp_hc": gated_residual_weights(layer.mlp_hyper_connection)[1],
+        "attn_hc": gated_residual_weights(
+            layer.attn_hyper_connection, fused_kernels=fused_kernels
+        )[1],
+        "mlp_hc": gated_residual_weights(
+            layer.mlp_hyper_connection, fused_kernels=fused_kernels
+        )[1],
         "moe": moe_weights(layer.mlp)[1],
     }
     if layer.is_linear:
@@ -943,7 +1055,11 @@ def layer_weights(layer: nn.Module) -> dict[str, Any]:
 
 
 def build_layer(
-    layer: nn.Module, *, compiled: bool = True, use_kernel: bool = True
+    layer: nn.Module,
+    *,
+    compiled: bool = True,
+    use_kernel: bool = True,
+    fused_kernels: bool = False,
 ) -> CompiledLayer:
     """One ``Qwen4ExpDecoderLayer`` as one compiled step.
 
@@ -964,15 +1080,22 @@ def build_layer(
             "from an mmap through numpy inside the forward"
         )
 
-    attn_hc = build_gated_residual(layer.attn_hyper_connection, compiled=False)
-    mlp_hc = build_gated_residual(layer.mlp_hyper_connection, compiled=False)
+    attn_hc = build_gated_residual(
+        layer.attn_hyper_connection, compiled=False, fused_kernels=fused_kernels
+    )
+    mlp_hc = build_gated_residual(
+        layer.mlp_hyper_connection, compiled=False, fused_kernels=fused_kernels
+    )
     moe = build_moe_step(layer.mlp, compiled=False)
     inject = hyper_inject_body
-    weights = layer_weights(layer)
+    weights = layer_weights(layer, fused_kernels=fused_kernels)
 
     if layer.is_linear:
         branch = build_gdn_step(
-            layer.linear_attn, use_kernel=use_kernel, compiled=False
+            layer.linear_attn,
+            use_kernel=use_kernel,
+            compiled=False,
+            fused_kernels=fused_kernels,
         )
 
         def step(hidden, conv_state, ssm_state, weights):
@@ -1094,13 +1217,25 @@ class DecodeState:
 
 
 def new_state(
-    model: nn.Module, *, batch: int = 1, capacity: int = 256, dtype=mx.bfloat16
+    model: nn.Module,
+    *,
+    batch: int = 1,
+    capacity: int = 256,
+    dtype=mx.bfloat16,
+    eager_indices: Sequence[int] = (),
 ) -> DecodeState:
-    """An empty :class:`DecodeState` for *model* with the KV buffers allocated."""
+    """An empty :class:`DecodeState` for *model* with the KV buffers allocated.
+
+    ``eager_indices`` names layers that run as eager islands and therefore hold
+    a vendored cache instead of arrays in this state. A PLE layer is always
+    one; generation 2 adds the sparse-attention layers when the context is past
+    the indexer budget. See :func:`island_layers`.
+    """
     inner = _language_model(model).model
+    skip = set(eager_indices)
     layers: list[LayerState] = []
-    for layer in inner.layers:
-        if "ple" in layer:
+    for index, layer in enumerate(inner.layers):
+        if index in skip or "ple" in layer:
             layers.append(LayerState(kind=EAGER, arrays=()))
             continue
         if layer.is_linear:
@@ -1399,6 +1534,12 @@ class CompiledModel:
     #: their own state, because it is state a trace cannot hold.
     eager_caches: dict[int, Any] = field(default_factory=dict)
     tail: Optional[Callable[..., Any]] = None
+    #: Layer indices that run as eager islands. Empty when the whole model is
+    #: one graph. Generation 2 puts the sparse-attention layers in here as well
+    #: as the PLE layers; see :func:`island_layers`.
+    island_indices: tuple[int, ...] = ()
+    #: True when the layer traces call the eager path's fused Metal kernels.
+    fused_kernels: bool = False
 
     def embed(self, tokens: mx.array) -> mx.array:
         inner = _language_model(self.model).model
@@ -1420,7 +1561,11 @@ class CompiledModel:
         budget is a property of the length, and the length is not known until
         a step runs.
         """
-        if self.sparse_budget and length > self.sparse_budget:
+        if (
+            self.sparse_budget
+            and length > self.sparse_budget
+            and not self._sparse_layers_are_islands()
+        ):
             raise ValueError(
                 f"context {length} is past the QSA indexer budget "
                 f"{self.sparse_budget}, where the eager attention selects key "
@@ -1429,6 +1574,23 @@ class CompiledModel:
                 "here attends to keys the eager path drops and returns a "
                 "plausible wrong answer. See COMPILED.md sections 2 and 7."
             )
+
+    def _sparse_layers_are_islands(self) -> bool:
+        """Whether every layer with a QSA indexer runs eagerly.
+
+        That is generation 2's answer to the refusal above: the layer that
+        would need the selection is not in a trace at all, so a length past the
+        budget is not a wrong answer, it is one more eager dispatch. The
+        refusal stands for a model built without those islands, which is every
+        generation 1 build.
+        """
+        inner = _language_model(self.model).model
+        islands = set(self.island_indices)
+        return all(
+            index in islands
+            for index, layer in enumerate(inner.layers)
+            if getattr(getattr(layer, "self_attn", None), "indexer", None) is not None
+        )
 
     def __call__(self, tokens: mx.array, state: DecodeState):
         """Embed, run the compiled step, and return ``(logits, hidden, state)``."""
@@ -1499,7 +1661,12 @@ def untraceable_layers(model: nn.Module) -> list[int]:
 
 
 def build_model(
-    model: nn.Module, *, compiled: bool = True, use_kernel: bool = True
+    model: nn.Module,
+    *,
+    compiled: bool = True,
+    use_kernel: bool = True,
+    fused_kernels: bool = False,
+    eager_indices: Optional[Sequence[int]] = None,
 ) -> CompiledModel:
     """Chain every layer, the final mixer and the head into one graph.
 
@@ -1509,24 +1676,37 @@ def build_model(
     eager layer rather than one graph, and what the split costs is one extra
     dispatch rather than the saving. A model with none -- every synthetic model
     here -- takes exactly the single-graph path it always did.
+
+    ``eager_indices`` overrides which layers become islands. The default is
+    :func:`untraceable_layers`, which is the PLE layers; generation 2 passes
+    :func:`island_layers` instead, which adds the sparse-attention layers when
+    the context is past the indexer budget.
     """
     language = _language_model(model)
     inner = language.model
-    eager_ids = untraceable_layers(model)
+    eager_ids = (
+        untraceable_layers(model) if eager_indices is None else sorted(eager_indices)
+    )
     layers = [
         None
         if index in eager_ids
-        else build_layer(layer, compiled=False, use_kernel=use_kernel)
+        else build_layer(
+            layer, compiled=False, use_kernel=use_kernel, fused_kernels=fused_kernels
+        )
         for index, layer in enumerate(inner.layers)
     ]
-    mixer = build_gated_residual(inner.hyper_connection_mixer, compiled=False)
+    mixer = build_gated_residual(
+        inner.hyper_connection_mixer, compiled=False, fused_kernels=fused_kernels
+    )
     head_spec, head_arrays = split_linear(language.lm_head)
     kinds = [None if layer is None else layer.kind for layer in layers]
     steps = [None if layer is None else layer.step for layer in layers]
 
     weights = {
         "layers": [{} if layer is None else layer.weights for layer in layers],
-        "mixer": gated_residual_weights(inner.hyper_connection_mixer)[1],
+        "mixer": gated_residual_weights(
+            inner.hyper_connection_mixer, fused_kernels=fused_kernels
+        )[1],
         "head": head_arrays,
     }
 
@@ -1546,7 +1726,16 @@ def build_model(
 
     if eager_ids:
         return _planned_model(
-            model, inner, layers, weights, mixer, head_spec, run, eager_ids, compiled
+            model,
+            inner,
+            layers,
+            weights,
+            mixer,
+            head_spec,
+            run,
+            eager_ids,
+            compiled,
+            fused_kernels,
         )
 
     def step(hidden, states, weights, sparse_masks=None):
@@ -1577,6 +1766,7 @@ def build_model(
         hc_count=int(inner.args.hc_count),
         model=model,
         sparse_budget=_sparse_budget(inner),
+        fused_kernels=fused_kernels,
     )
 
 
@@ -1590,7 +1780,16 @@ def _sparse_budget(inner) -> int:
 
 
 def _planned_model(
-    model, inner, layers, weights, mixer, head_spec, run, eager_ids, compiled
+    model,
+    inner,
+    layers,
+    weights,
+    mixer,
+    head_spec,
+    run,
+    eager_ids,
+    compiled,
+    fused_kernels=False,
 ):
     """``build_model`` for a model with an untraceable layer in it."""
     count = len(inner.layers)
@@ -1637,6 +1836,8 @@ def _planned_model(
         eager_caches={},
         tail=mx.compile(tail) if compiled else tail,
         sparse_budget=_sparse_budget(inner),
+        island_indices=tuple(eager_ids),
+        fused_kernels=fused_kernels,
     )
 
 
@@ -1741,3 +1942,351 @@ def build_layer_split(
     if not compiled:
         return mix_step, rest_step
     return mx.compile(mix_step, shapeless=True), mx.compile(rest_step)
+
+
+# ---------------------------------------------------------------------------
+# generation 2: the same kernels the eager path runs, inside the trace
+# ---------------------------------------------------------------------------
+#
+# Generation 1 asked whether the decode forward could be traced. It could, and
+# on the checkpoint that removed 81 to 87% of the host build and added 24 to
+# 71% to the step, because the traced layer computed out of plain MLX ops what
+# the eager layer next to it computed with fused Metal kernels: the
+# hyper-connection block, ninety-six times a step, and the Gated DeltaNet's
+# gated output norm.
+#
+# Generation 2 asks the narrower question that follows: can a trace hold the
+# kernels? At fixed shapes it can. ``mx.compile`` treats an
+# ``mx.fast.metal_kernel`` as one opaque node, replays it from the C++ side
+# like any other primitive, and produces bit-identical results. Shapeless it
+# cannot, and that is not a bug to route around -- the output shape of a custom
+# kernel is a declaration, not an inference -- so per-shape tracing is the
+# price of the kernels rather than a compromise. What that costs is one trace
+# per (verify width, KV capacity) and :func:`warm_traces` pays it at startup.
+#
+# Three pieces here. :func:`island_layers` and :func:`plan_layout` say which
+# layers cannot be in a trace and how the rest group into segments.
+# :func:`build_gen2` is the builder. :func:`warm_traces` walks the grid inside
+# a budget and reports what it cost.
+
+
+def island_layers(model: nn.Module, *, length: Optional[int] = None) -> list[int]:
+    """Layer indices that run eagerly between the compiled segments.
+
+    Two kinds, and they are the only two:
+
+    *PLE layers.* ``Qwen4ExpNGramEmbedding`` reads rows out of a 32 GB packed
+    table on SSD, through an mmap and numpy, in the middle of the forward. A
+    trace cannot hold a disk read. One layer of 48 on the checkpoint.
+
+    *Sparse-attention layers past the indexer budget.* Above the budget the
+    eager attention selects key blocks, and the selection needs this layer's
+    own mixed hyper-connection output plus ``int(cache.offset)`` and a pooled
+    key cache with Python-level invalidation. COMPILED.md section 2 has the
+    argument; the short form is that a dense trace there attends to keys the
+    eager path drops and returns a plausible wrong answer. Generation 1
+    refused such a length outright. Generation 2 runs those layers eagerly,
+    which is what makes 64k reachable at all.
+
+    ``length`` is the context the plan is for. ``None`` means "any length",
+    which puts every indexed attention layer on the eager side; a length at or
+    under the budget leaves them in the traces, where they are dense and exact.
+    """
+    inner = _language_model(model).model
+    budget = _sparse_budget(inner)
+    islands = []
+    for index, layer in enumerate(inner.layers):
+        if "ple" in layer:
+            islands.append(index)
+            continue
+        indexer = getattr(getattr(layer, "self_attn", None), "indexer", None)
+        if indexer is None:
+            continue
+        if length is None or (budget and length > budget):
+            islands.append(index)
+    return islands
+
+
+@dataclass(frozen=True)
+class LayoutPlan:
+    """How a layer stack splits into traced segments and eager islands.
+
+    Computed from the config alone, so the checkpoint's numbers do not need
+    the checkpoint loaded -- which matters, because loading it is 70 GB and one
+    process at a time.
+    """
+
+    layers: int
+    islands: tuple[int, ...]
+    segments: tuple[tuple[int, int], ...]
+    #: Whether any traced segment contains an attention layer. When none does,
+    #: KV capacity is not part of any trace key and the grid collapses to the
+    #: widths alone, which is the case at every context past the budget.
+    capacity_in_trace_key: bool
+
+    @property
+    def island_count(self) -> int:
+        return len(self.islands)
+
+    @property
+    def segment_count(self) -> int:
+        return len(self.segments)
+
+    def traces(self, widths: Sequence[int], capacities: Sequence[int]) -> int:
+        """Distinct traces this layout needs over a (width, capacity) grid."""
+        buckets = len(capacities) if self.capacity_in_trace_key else 1
+        return self.segment_count * len(widths) * buckets
+
+
+def plan_layout(
+    *,
+    layer_types: Sequence[str],
+    ple_layer_ids: Sequence[int] = (),
+    length: Optional[int] = None,
+    indexer_budget: int = 0,
+) -> LayoutPlan:
+    """:func:`island_layers` and the segmentation, from a config dict's fields.
+
+    ``layer_types`` is the checkpoint config's list of ``"linear_attention"``
+    and ``"full_attention"``; ``ple_layer_ids`` is its PLE list. Nothing here
+    touches a model, so ``bench/decode/compiled_path.py layout --config ...``
+    can answer "how many traces and how many islands" for the checkpoint while
+    another process owns the GPU.
+    """
+    count = len(layer_types)
+    ple = set(int(i) for i in ple_layer_ids)
+    sparse_islanded = length is None or (
+        bool(indexer_budget) and length > indexer_budget
+    )
+    islands = sorted(
+        index
+        for index in range(count)
+        if index in ple
+        or (sparse_islanded and layer_types[index] == "full_attention")
+    )
+    segments: list[tuple[int, int]] = []
+    start = 0
+    for index in [*islands, count]:
+        if index > start:
+            segments.append((start, index))
+        start = index + 1
+    capacity_in_key = any(
+        layer_types[i] == "full_attention"
+        for begin, end in segments
+        for i in range(begin, end)
+    )
+    return LayoutPlan(
+        layers=count,
+        islands=tuple(islands),
+        segments=tuple(segments),
+        capacity_in_trace_key=capacity_in_key,
+    )
+
+
+def build_gen2(
+    model: nn.Module,
+    *,
+    length: Optional[int] = None,
+    compiled: bool = True,
+    use_kernel: bool = True,
+    fused_kernels: bool = True,
+) -> CompiledModel:
+    """The generation 2 build: fused kernels in the traces, islands around them.
+
+    ``length`` is the context this build is for, and it decides whether the
+    sparse-attention layers are inside the traces (at or under the indexer
+    budget, where they are dense) or islands beside them (past it). A build is
+    valid for any length on its own side of the budget; crossing the budget
+    needs a rebuild, which is one more thing the engine has to own and is
+    stated plainly in COMPILED.md rather than hidden behind a rebuild-on-demand.
+    """
+    return build_model(
+        model,
+        compiled=compiled,
+        use_kernel=use_kernel,
+        fused_kernels=fused_kernels,
+        eager_indices=island_layers(model, length=length),
+    )
+
+
+# ---------------------------------------------------------------------------
+# the trace cache
+# ---------------------------------------------------------------------------
+
+
+def capacity_buckets(*, up_to: int, step: int = 256) -> list[int]:
+    """Every distinct capacity :func:`capacity_for` produces up to *up_to*.
+
+    The trace grid's other axis. The schedule steps by 256 to 2048 and doubles
+    from 4096 up, so a 262k context is fifteen buckets rather than a thousand,
+    and the waste stays under 2x of the arithmetic on masked columns.
+    """
+    buckets: list[int] = []
+    tokens = 1
+    while tokens <= up_to:
+        value = capacity_for(tokens, step)
+        if not buckets or value != buckets[-1]:
+            buckets.append(value)
+        if value >= up_to:
+            break
+        tokens = value + 1
+    return buckets
+
+
+def _capacity_in_trace_key(compiled_model: CompiledModel) -> bool:
+    """Whether any traced segment of *compiled_model* holds an attention layer."""
+    inner = _language_model(compiled_model.model).model
+    islands = set(compiled_model.island_indices)
+    return any(
+        index not in islands and not layer.is_linear and "ple" not in layer
+        for index, layer in enumerate(inner.layers)
+    )
+
+
+@dataclass
+class WarmReport:
+    """What warming the grid cost: one row per (width, capacity) point."""
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    #: Points the budget stopped before reaching.
+    skipped: list[tuple[int, int]] = field(default_factory=list)
+    seconds: float = 0.0
+    #: MLX active memory before and after, in bytes. The compile cache never
+    #: evicts, so the difference is the standing cost of the warm grid plus the
+    #: throwaway state the warm-up allocated and dropped.
+    active_before: int = 0
+    active_after: int = 0
+    peak: int = 0
+
+    @property
+    def warmed(self) -> int:
+        return len(self.rows)
+
+    def first_call_ms(self) -> float:
+        return sum(row["first_ms"] for row in self.rows)
+
+    def summary(self) -> dict[str, Any]:
+        cached = [row["second_ms"] for row in self.rows]
+        return {
+            "warmed": self.warmed,
+            "skipped": len(self.skipped),
+            "seconds": self.seconds,
+            "first_call_total_ms": self.first_call_ms(),
+            "cached_call_median_ms": _median_of(cached),
+            "active_growth_mb": (self.active_after - self.active_before) / 2**20,
+            "peak_mb": self.peak / 2**20,
+        }
+
+
+def _median_of(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return 0.5 * (ordered[middle - 1] + ordered[middle])
+
+
+def warm_traces(
+    compiled_model: CompiledModel,
+    *,
+    widths: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8),
+    capacities: Sequence[int] = (4096,),
+    budget_seconds: float = 30.0,
+    budget_mb: float = 2048.0,
+    vocab: Optional[int] = None,
+) -> WarmReport:
+    """Take every trace on the (width, capacity) grid, inside a budget.
+
+    A first call at a new shape pays the trace; every later call at that shape
+    pays a dispatch. Paying them all at startup is the difference between a
+    server whose first token after a width change costs an extra 8 ms per
+    segment and one whose steady state is the steady state from the first
+    token.
+
+    The grid is walked width-major inside each capacity, and the loop stops on
+    the first budget breach rather than part way through a point, so a report
+    with ``skipped`` in it is a report of a grid that was cut, not corrupted.
+    Nothing is evicted -- MLX's compile cache has no eviction and neither does
+    this -- so ``active_growth_mb`` is the standing cost and the caller decides
+    whether the grid is worth it.
+
+    Warming runs on throwaway state: a fresh :class:`DecodeState` per capacity
+    and a fresh vendored cache for every island, both dropped afterwards. The
+    caller's own state is not touched, and the islands' caches are put back.
+    """
+    import time
+
+    model = compiled_model.model
+    language = _language_model(model)
+    if vocab is None:
+        vocab = int(language.args.vocab_size)
+    islands = list(compiled_model.island_indices)
+    held_caches = dict(compiled_model.eager_caches)
+
+    # When every attention layer is an island, no traced segment holds a KV
+    # buffer, so capacity is not part of any trace key and the grid collapses
+    # to the widths. That is the case at every context past the indexer budget,
+    # which is where a long-context server lives, and it is the reason the
+    # trace count does not grow with the context there.
+    if not _capacity_in_trace_key(compiled_model):
+        capacities = capacities[:1]
+
+    report = WarmReport(active_before=int(mx.get_active_memory()))
+    started = time.perf_counter()
+    stop = False
+    for capacity in capacities:
+        if stop:
+            report.skipped.extend((int(w), int(capacity)) for w in widths)
+            continue
+        for width in widths:
+            elapsed = time.perf_counter() - started
+            grown = (int(mx.get_active_memory()) - report.active_before) / 2**20
+            if elapsed > budget_seconds or grown > budget_mb:
+                stop = True
+                report.skipped.append((int(width), int(capacity)))
+                continue
+            if islands:
+                fresh = language.make_cache()
+                compiled_model.eager_caches = {i: fresh[i] for i in islands}
+            state = new_state(
+                model, capacity=capacity, eager_indices=islands
+            )
+            state = DecodeState(layers=state.layers, length=0)
+            mx.eval([a for entry in state.layers for a in entry.arrays])
+            tokens = mx.array(
+                [[(3 + i) % max(2, vocab - 1) + 1 for i in range(width)]], mx.int64
+            )
+            first = _one_warm_call(compiled_model, tokens, state)
+            second = _one_warm_call(compiled_model, tokens, state)
+            report.rows.append(
+                {
+                    "width": int(width),
+                    "capacity": int(capacity),
+                    "first_ms": first,
+                    "second_ms": second,
+                }
+            )
+    report.seconds = time.perf_counter() - started
+    report.active_after = int(mx.get_active_memory())
+    report.peak = int(mx.get_peak_memory())
+    compiled_model.eager_caches = held_caches
+    return report
+
+
+def _one_warm_call(compiled_model: CompiledModel, tokens: mx.array, state: DecodeState):
+    """One end-to-end call, timed, with exactly one synchronize on each side.
+
+    ``docs/ops/INCIDENTS.md`` rule 1: no per-scope evaluation and no per-scope
+    ``mx.synchronize()``. The whole step is built, evaluated once, synchronised
+    once.
+    """
+    import time
+
+    mx.synchronize()
+    started = time.perf_counter()
+    logits, hidden, _next = compiled_model(tokens, state)
+    mx.eval(logits, hidden)
+    mx.synchronize()
+    return (time.perf_counter() - started) * 1000.0

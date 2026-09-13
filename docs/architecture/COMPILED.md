@@ -616,3 +616,326 @@ is simpler and it is a real behaviour change: a rollback to a length with no
 staged snapshot is an error rather than a slow path. `ModelState.truncate`
 already behaves that way, so the engine's contract does not change, but the
 verify cycle has to keep staging before every block.
+
+---
+
+## Generation 2: the same kernels, inside the trace
+
+Section 6 is the honest failure. Host build fell from 14.03 ms to 2.64 on the
+checkpoint, five to eightfold, exactly as sections 1 to 3 said it would, and
+the step got 71% worse at width 1 and 24% worse at width 4 anyway. Section 6
+named two reasons and one of them is the larger: a compiled layer gave up
+`hc_fused`. Section 1c had already written the qualification down -- "as a
+standalone replacement in the eager path the compiled residual is not the
+fastest thing available" -- and then `build_layer` composed it 96 times a step
+regardless. The Gated DeltaNet's gated output norm went the same way: the eager
+`Qwen4ExpRMSNormGated` takes `gdn_norm_gate`, one fused launch, and the
+compiled block spelled it as an `rms_norm`, two casts, a sigmoid and a
+multiply.
+
+So generation 2 asks the narrower question. Not "can the decode forward be
+traced" -- generation 1 answered that -- but "can a trace hold the kernels".
+
+### 1. It can, at fixed shapes, and it cannot shapeless
+
+`mx.compile` at fixed shapes accepts an `mx.fast.metal_kernel` as one opaque
+node and replays it from the C++ side like any other primitive. Shapeless it
+refuses, and the refusal is not a gap in MLX: a custom kernel's output shape is
+something the caller *declares* in `output_shapes`, so there is nothing for a
+shapeless trace to infer it from.
+
+`python bench/decode/compiled_path.py kernels` generates this table on the
+synthetic model rather than restating it from memory, because an error string
+is a fact about a version. On MLX 0.32.2:
+
+| kernel | traced at fixed shapes | shapeless |
+|---|---|---|
+| `hc_fused` (norm, down/inject, up) | yes | `ValueError: [Primitive::output_shapes] CustomKernel cannot infer output shapes.` |
+| `gdn_norm_gate` | yes | same |
+| `gated_delta_kernel` | yes | same |
+| `_mrope_apply_kernel` | yes | same |
+| `moe_weighted_sum` | yes | same |
+| `topk_radix` | yes | same |
+| `verify_accept` | yes | `ValueError: [Primitive::output_shapes] Slice cannot infer output shapes.` |
+| `ple_packed_lookup` | **no** | not attempted |
+| `qsa_gathered_attention` | **no** | not attempted |
+
+The two that do not trace do not fail with an MLX error, which is the more
+useful way to say it: they are not pure array functions. `ple_packed_lookup`
+reads rows off SSD through an mmap and numpy in the middle of the forward.
+`qsa_gathered_attention` builds its `QSAGeometry` from `int(cache.offset)` and
+the pooled index bank's host-side lengths, offsets and phases, so the selection
+is host work by construction rather than by formulation. Those two are the
+islands in section 3 below, and no amount of retracing changes that.
+
+`verify_accept` is worth a line of its own: it traces, and its shapeless error
+is `Slice`, not `CustomKernel`, because today it is plain MLX ops. The fused
+launch is a later change and the seam already exists, so when it lands its row
+here will move to `CustomKernel` and nothing else about the verify step will.
+
+### 2. What that buys, block by block
+
+`titan/adapters/mlx/compiled_kernels.py` is the new file: each fused kernel the
+eager decode path calls, written as a function of arrays alone. No module
+reads, no `mx.eval`, no `try/except` around a lazy Metal compile, no
+Python-level cache keyed on a shape. The Metal sources are not copied -- they
+come from `hc_fused` and from `titan.kernels` -- so there is still one body per
+kernel in the tree.
+
+**The hyper-connection block.** `hc_fused_plan(module)` decides eligibility
+once at build time, out of the same predicates `hc_fused.compatible` applies
+per call: the layout, the quantisation, the 64-element alignment, a Metal
+device. `hc_fused_body(hyper_input, arrays, plan)` is the three kernels. The
+row bound is the one thing a build-time plan cannot decide, and it is decided
+at *trace* time, where the shape is a Python tuple: at most sixteen rows takes
+the kernels, more composes the ops form. So a compiled step never changes which
+arithmetic it runs while it runs.
+
+**The Gated DeltaNet gate.** `gdn_norm_gate_plan(module, width=...)` resolves
+`gdn.norm_gate_fused` through the adapter's registry door, at build time,
+exactly as the eager site resolves it -- which means `kernels.reference_only`
+and `kernels.disabled` reach the compiled path, and a control arm measured here
+is the control arm the server would run. The plan declines width one, because
+the eager site declines width one (`x.shape[0] * x.shape[1] > 1`). The kernel
+is bit-identical at width one too; declining it anyway is the whole discipline
+of this generation. Same kernels means the same kernels in the same places.
+
+Everything generation 1 already had inside the trace stays there: the gated
+delta recurrence, the fused rotary application, `moe_weighted_sum`.
+
+### 3. Islands, and how the checkpoint's 48 layers split
+
+`island_layers(model, length=...)` names the layers that run eagerly between
+the compiled segments, and `plan_layout(...)` computes the same thing from a
+config's `layer_types`, `ple_layer_ids` and `indexer_budget` with nothing
+loaded -- which matters, because the checkpoint is 70 GB and one process at a
+time. `bench/decode/compiled_path.py layout --config .../config.json` is the
+command.
+
+For `Qwen3.8-Flash-Next-oQ4e-mtp`: 48 layers, `full_attention` at every fourth
+index (3, 7, ... 47), PLE at index 2, indexer budget 2048.
+
+| context | islands | traced segments | capacity in the trace key |
+|---|---:|---:|---|
+| at or under 2048 | 1 (the PLE layer) | 2, being layers 0-1 and 3-47 | yes |
+| over 2048 | 13 (PLE plus the twelve sparse layers) | 12, being 0-1 and eleven runs of three | **no** |
+
+The second row is the interesting one and the reason the trace count stops
+growing exactly where the context starts getting long. Past the budget every
+attention layer is an island, so no traced segment holds a KV buffer, so no
+trace of theirs depends on capacity. Twelve segments across widths 1 to 8 is
+**96 traces**, at 64k and at 262k alike. Under the budget it is two segments
+across eight widths and, for a session that grew into that context, the nine
+capacity buckets it crossed on the way: 144 traces worst case.
+
+That replaces generation 1's estimate of "up to 72 across widths 1..8 and
+capacity buckets" with a number, and it replaces generation 1's *refusal* past
+the budget with a plan. `CompiledModel` still refuses a length past the budget
+when the sparse layers are inside its traces, which is every generation 1
+build; it stops refusing exactly when they are islands, and
+`_sparse_layers_are_islands` is the condition, not a flag.
+
+What an island costs is one extra dispatch and the Python of one eager layer.
+On the synthetic model at a 3000-token context, where six of 24 layers are
+islands, host build goes from 0.54 ms (all traced, under the budget) to 2.25 ms
+against eager's 7.71 -- still a 3.4x cut, and a quarter of the layers now
+paying full Python price.
+
+### 4. Numerics: bit-identical, not within a ULP
+
+Generation 1 held itself to one bf16 ULP because it computed the
+hyper-connection block a different way. Generation 2 computes it the same way,
+so anything short of equality is a bug rather than a tolerance, and
+`tests/model/test_compiled_kernels.py` asserts equality.
+
+Measured on the synthetic model **cast to bfloat16**, against the ordinary
+eager forward with the kernels on:
+
+* logits bit-identical at widths 1, 2, 4 and 6, at contexts 200, 300, 600 and
+  2000 -- either side of the 256 and 512 growth points and up to the budget;
+* logits bit-identical at 2100 and 3000, past the budget, where the sparse
+  layer is an island;
+* the Gated DeltaNet conv state and recurrent state compared directly, layer by
+  layer, bit-identical at widths 1 and 4 at 600 and 2100;
+* `hc_fused_body` bit-identical to `hc_fused.fused_forward` at widths 1, 2, 4,
+  8 and 16, and `gdn_norm_gate_body` bit-identical to
+  `Qwen4ExpRMSNormGated.__call__`.
+
+The cast is load-bearing and it is the thing generation 1's synthetic numbers
+were missing. `build_synthetic` leaves the model in float32, and in float32 not
+one fused decode kernel is eligible: `hc_fused` declines a float32 norm weight
+by layout and `gdn_norm_gate` declines a float32 input by dtype. So generation
+1's whole synthetic table was measured against an eager arm with no kernels in
+it, which is why it promised 26% and delivered +71%. `bf16_synthetic` in the
+bench is the fix, and two tests assert both halves of it: the bfloat16 model is
+one the kernels take, and the float32 model is not.
+
+**The rollback contract is unchanged.** `truncate_state` and
+`rollback_speculative_state` are exactly section 4's, including the requirement
+that a rollback to a length with no staged snapshot is an error. A test runs a
+width-1 step, runs a width-4 block, comes back to the length before the block
+and asserts the next width-1 step is bit-identical to the first, and another
+pins the `accepted + 1` arithmetic. What generation 2 changed is what a step
+computes, not what the state promises.
+
+### 5. The synthetic table
+
+`python bench/decode/compiled_path.py generations --layers 24 --context 600
+--widths 1,4 --repeats 20`. All three arms in one process on one prefill,
+measured forwards and then backwards and averaged, on a bfloat16 model so the
+eager arm has the fused kernels in it. Medians of four consecutive runs on a
+quiet machine; a fifth run taken while the workbench beside it was busy moved
+every absolute number by up to 3x and is not in here, which is why the arms are
+measured together rather than in separate processes.
+
+| | w1 eager | w1 gen 1 | w1 gen 2 | w4 eager | w4 gen 1 | w4 gen 2 |
+|---|---:|---:|---:|---:|---:|---:|
+| ops | 2243 | 2936 (+30.9%) | 2350 (+4.8%) | 2322 | 2936 (+26.4%) | 2332 (+0.4%) |
+| build ms | 5.64 | 0.54 (-90.4%) | 0.55 (-90.3%) | 5.88 | 0.55 (-90.6%) | 0.54 (-90.9%) |
+| step ms | 6.03 | 5.03 (-16.7%) | 4.25 (-29.6%) | 6.27 | 5.14 (-18.1%) | 4.39 (-30.0%) |
+| gpu ms | 0.39 | 4.49 | 3.70 | 0.40 | 4.59 | 3.86 |
+
+Read the op column first this time, not the build column. Generation 1 builds a
+graph 31% larger than eager's at width 1 and 26% larger at width 4; generation
+2 builds one 4.8% and 0.4% larger. That difference *is* the fused blocks: 48
+layers times two hyper-connections is 96 sites where generation 1 expands three
+Metal launches into a norm, two quantised matmuls, a silu, two sigmoids, a
+reshape and a mean, and generation 2 does not. The GPU column says the same
+thing from the other side: 3.70 against 4.49 ms at width 1, a 17.6% cut in GPU
+work, from running the arithmetic the eager path already runs.
+
+The step column is 30% better than eager and 13 points better than generation
+1, and it is the *least* transferable number in the table. The synthetic
+model's GPU work is 0.4 ms against 5.6 ms of host; the checkpoint's is 2.0
+against 15.8 at width 1 and 3.7 against 23.1 at width 4. A model whose GPU is
+idle 93% of the time cannot say what happens to a step whose regression came
+from GPU work, which is exactly the mistake section 3 made and section 6 paid
+for. What the synthetic model *can* say is that the mechanism section 6 blamed
+is gone: the graph is the size of eager's graph again, the kernels are the
+eager kernels, and the bits are the eager bits.
+
+### 6. The trace cache
+
+`python bench/decode/compiled_path.py warm --layers 24 --length 600
+--capacities 256,512,1024,2048,4096`. Forty grid points, eight widths across
+five capacities, in 1.04 seconds.
+
+| capacity | median first call | total for eight widths | median cached call |
+|---|---:|---:|---:|
+| 256 | 70.7 ms | 440.7 ms | 5.50 ms |
+| 512 | 11.7 ms | 93.9 ms | 4.45 ms |
+| 1024 | 12.0 ms | 95.9 ms | 4.61 ms |
+| 2048 | 12.5 ms | 99.9 ms | 4.85 ms |
+| 4096 | 12.6 ms | 100.7 ms | 5.08 ms |
+
+The first capacity costs six times what the later ones cost and the difference
+is not the trace. It is Metal specialising every custom kernel for a row count
+it has not seen: `output_shapes` changes with the width, so a new width is a
+new kernel specialisation as well as a new trace. A new *capacity* at a width
+already seen is the trace alone, 12 ms at 24 layers -- close to generation 1's
+8.3 ms, a little more because a fused block is more nodes to construct than the
+ops it replaces are cheap to construct.
+
+So the warm cost has two terms, and only one of them scales with the grid: about
+70 ms once per verify width, and about 12 ms per (width, capacity) pair after
+that, at 24 layers. Scaled to 48 layers, warming widths 1 to 8 at one capacity
+is roughly 1.1 seconds; the whole 96-trace past-the-budget grid is that same
+1.1 seconds, because past the budget there is only one capacity.
+
+`warm_traces` takes a time budget and a memory budget and stops on the first
+breach rather than part way through a point, so a cut grid is reported as cut.
+Warming runs on throwaway state -- a fresh `DecodeState` per capacity and a
+fresh vendored cache per island, both dropped afterwards -- because an island's
+cache is state the functional rollback cannot reach, and a warm-up that stepped
+one would leave the model a token ahead of its own KV, silently, and only past
+the budget. A test asserts the islands come back untouched.
+
+**Nothing is evicted.** MLX's compile cache has no eviction and neither does
+this. The measured cost of the forty-point grid is 8.1 MB of MLX active memory
+and a 23.5 MB peak, on a 24-layer synthetic; the standing cost is the 8.1 MB.
+That is the number generation 1's section 7 said had not been measured. At 48
+layers and the checkpoint's shapes it will be larger, and the honest thing to
+say is that it is measured on synthetic and predicted nowhere else.
+
+### 7. The real-model command
+
+Nothing in this section has run on the checkpoint. Another process owns the GPU
+and the 70 GB of weights. This is the command for whoever does, and it obeys
+both rules the 2026-09-12 panic produced: exactly one `mx.synchronize()` on
+each side of a timed step, no per-scope evaluation anywhere, op counting off by
+default and graph-only when on, results under the repo.
+
+```
+python bench/decode/compiled_path.py real --gen2 \
+    --model ~/Engineering/MLX/_models/Jundot/Qwen3.8-Flash-Next-oQ4e-mtp \
+    --contexts 600,64000 --widths 1,4 --repeats 20
+```
+
+It writes `bench/decode/results/compiled_real_gen2_<context>.json`, alongside
+generation 1's `compiled_real_<context>.json`, so the two are directly
+comparable. The 64k half is now runnable, which it was not in ROUND4: past the
+budget the sparse layers are islands rather than a refusal.
+
+Run it in the order INCIDENTS rule 2 asks for. The control arm is
+`kernels.reference_only`, which turns the fused paths off on *both* arms and
+should leave them agreeing exactly, because the compiled step resolves its ops
+through the same registry door the eager step does. Then the default
+configuration, at 600 before 64k.
+
+What to expect, stated in advance so it can be wrong. Host build should land
+near generation 1's 2.64 and 2.88 ms at 600, because the tracing is the same
+tracing; at 64k it should be higher, roughly four times, because a quarter of
+the layers are islands paying full Python. GPU time should land near the eager
+arm's 2.26 and 3.69 ms rather than generation 1's 25.27 and 30.40, because the
+graph is now the eager graph. If it does, the step is GPU-bound at a few
+milliseconds and this workstream is done. If host build lands where predicted
+and GPU time does not, the remaining difference is something in the traced
+graph that is not in the eager graph, and the op count from `--ops` is where to
+look for it.
+
+### 8. Risks
+
+**The synthetic model cannot answer the question this section exists to
+answer.** Its GPU work is 0.4 ms against 5.6 ms of host; the checkpoint's ratio
+is the other way. Every step-time number in section 5 is a floor, and section
+6 of this document is the record of what happens when a synthetic floor is
+read as a prediction. The only thing that settles it is the command in section
+7.
+
+**Metal specialisation per verify width is a new first-call cost.** Generation
+1 paid about 8.3 ms for a new trace at 24 layers. Generation 2 pays about 70 ms
+the first time it sees a width, because every custom kernel in the graph gets a
+new specialisation with it. A server that warms widths 1 to 8 at startup never
+notices; one that meets a ninth width mid-flight pays it once, on a token.
+
+**A build is tied to one side of the indexer budget.** `build_gen2(length=...)`
+decides at build time whether the sparse layers are traced or islands, and
+crossing 2048 mid-sequence needs a rebuild. That is a real thing the engine has
+to own and it is not owned yet: `backend.py` is not this workstream's file. The
+safe default for a server that serves long contexts is to build with
+`length=None`, which islands every sparse layer at every length and gives up
+the sub-budget single-graph win to avoid the rebuild.
+
+**Capacity waste at 64k is unchanged and now matters less.** The compiled
+attention step attends over the whole buffer, and a context just above a
+doubling point wastes close to 2x of the arithmetic on masked columns. Past the
+budget no attention layer is in a trace at all, so at 64k this is no longer a
+compiled-path cost; below 2048 the absolute waste is small. The risk moved
+rather than closing.
+
+**Two paths through one builder.** `build_gated_residual` now composes either
+the fused kernels or the ops form, chosen at trace time by the row count, and
+the two agree bit for bit only where the kernels are eligible. A layout the
+kernels decline -- a merged input projection, an unsupported bit width, a
+non-bfloat16 model -- silently gets the ops form, which is correct and slower
+and gives back exactly what generation 1 gave back. The failure mode is a
+performance cliff with no error, and the mitigation is that
+`CompiledModel.fused_kernels` records what was asked for while
+`hc_fused_plan` returning `None` records what was possible. A caller that wants
+to know it is on the fast path has to check the plan, not the flag.
+
+**`verify_accept` and `topk_radix` are not in any trace yet.** They trace --
+section 1's table says so -- but the verify block still calls them from Python
+between compiled model steps. Folding them into the step is the obvious next
+change and it is not this one; what this section establishes is that nothing
+about them blocks it.

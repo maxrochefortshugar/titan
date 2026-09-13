@@ -1,0 +1,186 @@
+{
+  "kind": "compiled_synthetic",
+  "generation": 1,
+  "dtype": "bfloat16",
+  "islands": [],
+  "fused_kernels": false,
+  "layers": 24,
+  "context": 600,
+  "repeats": 40,
+  "rows": [
+    {
+      "eager": {
+        "arm": "eager",
+        "width": 1,
+        "ops": 2243,
+        "top_primitives": [
+          [
+            "Reshape",
+            395
+          ],
+          [
+            "CustomKernel",
+            201
+          ],
+          [
+            "QuantizedMatmul",
+            187
+          ],
+          [
+            "Broadcast",
+            152
+          ],
+          [
+            "ExpandDims",
+            132
+          ],
+          [
+            "Multiply",
+            90
+          ],
+          [
+            "AsType",
+            86
+          ],
+          [
+            "Slice",
+            84
+          ]
+        ],
+        "build_ms": 9.564010000758572,
+        "step_ms": 16.19272900006763,
+        "gpu_ms": 6.628718999309058
+      },
+      "compiled": {
+        "arm": "compiled",
+        "width": 1,
+        "ops": 2936,
+        "top_primitives": [
+          [
+            "QuantizedMatmul",
+            387
+          ],
+          [
+            "Reshape",
+            254
+          ],
+          [
+            "ExpandDims",
+            222
+          ],
+          [
+            "Unflatten",
+            159
+          ],
+          [
+            "Squeeze",
+            154
+          ],
+          [
+            "CompiledBroadcastMultiply",
+            140
+          ],
+          [
+            "AsType",
+            121
+          ],
+          [
+            "Slice",
+            120
+          ]
+        ],
+        "build_ms": 1.1043647518818034,
+        "step_ms": 21.745697748883686,
+        "gpu_ms": 20.641332997001882
+      },
+      "width": 1
+    },
+    {
+      "eager": {
+        "arm": "eager",
+        "width": 4,
+        "ops": 2322,
+        "top_primitives": [
+          [
+            "Reshape",
+            467
+          ],
+          [
+            "QuantizedMatmul",
+            241
+          ],
+          [
+            "CustomKernel",
+            219
+          ],
+          [
+            "Broadcast",
+            177
+          ],
+          [
+            "ExpandDims",
+            144
+          ],
+          [
+            "Arange",
+            85
+          ],
+          [
+            "Slice",
+            84
+          ],
+          [
+            "Multiply",
+            72
+          ]
+        ],
+        "build_ms": 9.427989500181866,
+        "step_ms": 16.749635249652783,
+        "gpu_ms": 7.3216457494709175
+      },
+      "compiled": {
+        "arm": "compiled",
+        "width": 4,
+        "ops": 2936,
+        "top_primitives": [
+          [
+            "QuantizedMatmul",
+            387
+          ],
+          [
+            "Reshape",
+            254
+          ],
+          [
+            "ExpandDims",
+            222
+          ],
+          [
+            "Unflatten",
+            159
+          ],
+          [
+            "Squeeze",
+            154
+          ],
+          [
+            "CompiledBroadcastMultiply",
+            140
+          ],
+          [
+            "AsType",
+            121
+          ],
+          [
+            "Slice",
+            120
+          ]
+        ],
+        "build_ms": 1.0972702502840548,
+        "step_ms": 22.707760500452423,
+        "gpu_ms": 21.610490250168368
+      },
+      "width": 4
+    }
+  ]
+}
