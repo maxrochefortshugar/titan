@@ -364,6 +364,8 @@ class _QSAIndexerCache:
         self._pooled_index_offset = 0
         self._pooled_index_ratio = None
         self._pooled_index_tag = None
+        self._pooled_index_keys_f32 = None
+        self._pooled_f32_offset = 0
 
     def pooled_indexer_keys(
         self,
@@ -430,6 +432,62 @@ class _QSAIndexerCache:
                 dtype=self._index_keys.dtype,
             )
         return self._pooled_index_keys[:, : self._pooled_index_offset]
+
+    def pooled_indexer_keys_f32(
+        self,
+        compress_ratio: int,
+        index_key_norm,
+        apply_index_rope,
+        *,
+        cache_tag=None,
+    ) -> mx.array:
+        """The same completed block bank, held in float32 rather than cast.
+
+        Titan modification (ROUND5 step 4, the half of the QSA indexer seam
+        that needs no Metal kernel). ``_portable_indexer_scores`` scores in
+        float32 because which blocks win is a discrete choice and rounding the
+        products flips the ones near the cut-off. It got there by casting the
+        whole pooled bank on every decode step: at 64k that is 16,000 slots of
+        128 bf16 values read and 8 MB written, per layer, per token, and the
+        bank has not changed since the prompt went in. Holding the float32 copy
+        and extending it by the blocks that are new moves the cast from once a
+        step to once a block.
+
+        Bit-exact by construction rather than by tolerance: the values are the
+        same bf16 values widened by the same cast, and widening bf16 to float32
+        is lossless, so a step reads exactly the numbers it read before.
+
+        The cost is the second bank, 8 MB a layer at 64k against the 4 MB of
+        the first. That is 96 MB over the twelve QSA layers, which is the trade
+        this path is: it is a forward path rather than a default so that the
+        number can be measured against a control on the machine that pays it.
+        """
+        bank = self.pooled_indexer_keys(
+            compress_ratio,
+            index_key_norm,
+            apply_index_rope,
+            cache_tag=cache_tag,
+        )
+        blocks = int(bank.shape[1])
+        held = getattr(self, "_pooled_index_keys_f32", None)
+        offset = int(getattr(self, "_pooled_f32_offset", 0))
+        if held is None or offset > blocks:
+            held = None
+            offset = 0
+        capacity = 0 if held is None else int(held.shape[1])
+        if blocks > capacity:
+            grown = mx.zeros(
+                (bank.shape[0], int(self._pooled_index_keys.shape[1]), bank.shape[-1]),
+                dtype=mx.float32,
+            )
+            if held is not None and offset:
+                grown[:, :offset] = held[:, :offset]
+            held = grown
+        if blocks > offset:
+            held[:, offset:blocks] = bank[:, offset:blocks].astype(mx.float32)
+        self._pooled_index_keys_f32 = held
+        self._pooled_f32_offset = blocks
+        return held[:, :blocks]
 
     def _trim_indexer(self, length: int):
         self._index_offset = min(self._index_offset, max(0, int(length)))
@@ -1813,6 +1871,19 @@ class Qwen4ExpAttention(Qwen3_5Attention):
             self.indexer._apply_rope,
             cache_tag=self.indexer,
         )
+        # Titan modification (ROUND5 step 4): the float32 bank the scores are
+        # actually taken over, held rather than recast every step. Bit-exact;
+        # see ``Qwen4ExpQSAKVCache.pooled_indexer_keys_f32``.
+        pooled_index_keys_f32 = None
+        if forward_paths.enabled("qsa_pooled_bank_f32") and hasattr(
+            cache, "pooled_indexer_keys_f32"
+        ):
+            pooled_index_keys_f32 = cache.pooled_indexer_keys_f32(
+                self.indexer.compress_ratio,
+                self.indexer.k_layernorm,
+                self.indexer._apply_rope,
+                cache_tag=self.indexer,
+            )
         index_queries = self.indexer._apply_rope(
             index_queries,
             text_position_ids,
@@ -1830,6 +1901,7 @@ class Qwen4ExpAttention(Qwen3_5Attention):
             indexer_head_dim=self.indexer.head_dim,
             compress_ratio=self.indexer.compress_ratio,
             token_budget=self.indexer.token_budget,
+            pooled_index_keys_f32=pooled_index_keys_f32,
         )
         output = output.reshape(batch, length, -1)
         return self.o_proj(output * mx.sigmoid(gate))

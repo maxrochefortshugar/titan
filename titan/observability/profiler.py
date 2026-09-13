@@ -71,7 +71,7 @@ class RingProfiler:
         clock: Clock,
         *,
         ring: int = 4096,
-        events_kept: int = 256,
+        events_kept: int = 4096,
         trace_sample_every: int = 0,
     ) -> None:
         self.clock = clock

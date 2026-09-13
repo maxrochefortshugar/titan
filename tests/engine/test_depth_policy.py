@@ -11,6 +11,8 @@ is the choice that matters.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import pytest
 
 from titan.core.types import CycleProfile, SequenceId, VerifyOutcome
@@ -240,3 +242,260 @@ def test_the_estimator_still_reports_a_mean_for_anything_reading_it():
 def test_a_bad_depth_range_is_refused():
     with pytest.raises(ValueError):
         ExpectedValueDepthController(max_depth=1, min_depth=4)
+
+
+# -- convergence ------------------------------------------------------------
+#
+# ROUND4 section 1a measured the identical reference configuration at 93.5 and
+# 79.0 tok/s an hour apart, entirely because the policy settled on mean rows of
+# 3.60 once and 2.97 the other time. These tests are the fake-driven version of
+# that: one simulated machine and one simulated text, two starting points, and
+# the requirement that the policy ends up in the same place. They are the unit
+# half of ROUND5 step 1; the real-model half is the four-repeat spread in
+# bench/decode/ROUND5.md.
+
+
+class FakeWorkload:
+    """A machine and a text the policy can be run against deterministically.
+
+    ``truth`` is the real per-position acceptance probability, which the policy
+    is never told. ``intercept`` and ``slope`` are the real cycle cost. Nothing
+    is sampled: a chain of depth *k* accepts the number of positions whose
+    running survival product is still above a rotating threshold, which gives
+    the right long-run frequencies without a random number generator and
+    without a seed anyone has to trust.
+    """
+
+    def __init__(
+        self,
+        truth: Sequence[float],
+        *,
+        intercept: float = 14.0,
+        slope: float = 3.0,
+    ) -> None:
+        self.truth = [float(p) for p in truth]
+        self.intercept = float(intercept)
+        self.slope = float(slope)
+        self.step = 0
+
+    def cost_ms(self, width: int) -> float:
+        return self.intercept + self.slope * max(1, int(width))
+
+    def accepted(self, depth: int) -> int:
+        """How many of ``depth`` drafts stick this cycle."""
+        self.step += 1
+        # A fixed low-discrepancy sweep through [0, 1): position i is accepted
+        # when its own threshold falls under its true probability, so over any
+        # window the frequency at position i converges to truth[i - 1].
+        n = 0
+        for position in range(1, int(depth) + 1):
+            threshold = ((self.step * 0.6180339887 + position * 0.31) % 1.0)
+            if threshold >= self.truth[min(position, len(self.truth)) - 1]:
+                break
+            n += 1
+        return n
+
+    def run(self, policy: ExpectedValueDepthController, cycles: int) -> list[int]:
+        """Drive the policy for ``cycles`` cycles. Returns the depths it ran."""
+        depths: list[int] = []
+        for _ in range(cycles):
+            depth = policy.next_depths_for([1])[0]
+            depths.append(depth)
+            n_accepted = self.accepted(depth)
+            width = depth + 1
+            outcomes = (
+                [
+                    VerifyOutcome(
+                        SequenceId(1),
+                        accepted=tuple(range(n_accepted)),
+                        bonus=7,
+                        n_drafted=depth,
+                    )
+                ]
+                if depth > 0
+                else []
+            )
+            policy.record(profile(width, self.cost_ms(width)), outcomes)
+        return depths
+
+
+def converged(policy, workload, cycles=800):
+    """The depth the policy is running once it has stopped moving."""
+    depths = workload.run(policy, cycles)
+    tail = [d for d in depths[-200:]]
+    return max(set(tail), key=tail.count), tail
+
+
+def steer(policy, high: bool) -> None:
+    """Put the policy at a starting point before it sees the real workload.
+
+    ``high`` feeds it a run of fully accepted deep chains, which is the resting
+    point ROUND4 recorded at mean rows 3.60; the other feeds it a run of total
+    rejections, which is the one it recorded at 2.97. Neither is the workload
+    the policy is then asked to converge on.
+    """
+    for _ in range(120):
+        if high:
+            outcome = VerifyOutcome(
+                SequenceId(1), accepted=(1, 2, 3, 4, 5, 6), bonus=7, n_drafted=6
+            )
+            policy.record(profile(7, 20.0), [outcome])
+        else:
+            outcome = VerifyOutcome(SequenceId(1), accepted=(), bonus=7, n_drafted=1)
+            policy.record(profile(2, 60.0), [outcome])
+
+
+def test_the_policy_converges_to_one_depth_from_a_low_start_and_a_high_one():
+    truth = [0.85, 0.75, 0.62, 0.45, 0.3, 0.2]
+    low = controller(max_depth=6, window=64)
+    high = controller(max_depth=6, window=64)
+    fresh = controller(max_depth=6, window=64)
+    steer(low, high=False)
+    steer(high, high=True)
+    from_low, _ = converged(low, FakeWorkload(truth))
+    from_high, _ = converged(high, FakeWorkload(truth))
+    from_fresh, _ = converged(fresh, FakeWorkload(truth))
+    assert from_low == from_high == from_fresh
+
+
+def test_convergence_happens_inside_one_short_request():
+    """A resting point reached after the request has finished is not a fix.
+
+    Four 600-token prompts at three committed tokens a cycle is about eight
+    hundred cycles, so a policy that needs more than a couple of hundred to
+    agree with itself would still report ROUND4's spread.
+    """
+    truth = [0.85, 0.75, 0.62, 0.45, 0.3, 0.2]
+    low = controller(max_depth=6, window=64)
+    high = controller(max_depth=6, window=64)
+    steer(low, high=False)
+    steer(high, high=True)
+    from_low = FakeWorkload(truth).run(low, 400)[-200:]
+    from_high = FakeWorkload(truth).run(high, 400)[-200:]
+    assert max(set(from_low), key=from_low.count) == max(
+        set(from_high), key=from_high.count
+    )
+
+
+def test_the_two_starting_points_disagreed_before_the_workload_ran():
+    """The steer is a real steer: without it the test above proves nothing."""
+    low = controller(max_depth=6, window=64)
+    high = controller(max_depth=6, window=64)
+    steer(low, high=False)
+    steer(high, high=True)
+    assert low.next_depths_for([1])[0] != high.next_depths_for([1])[0]
+
+
+def test_the_running_depth_stops_moving_once_it_has_converged():
+    workload = FakeWorkload([0.85, 0.75, 0.62, 0.45, 0.3, 0.2])
+    policy = controller(max_depth=6, window=64)
+    depths = workload.run(policy, 900)
+    tail = depths[-200:]
+    incumbent = max(set(tail), key=tail.count)
+    # Everything that is not the incumbent is a probe, and a probe is one
+    # decision in ``probe_every``, both directions, so at most two in that many.
+    off = sum(1 for d in tail if d != incumbent)
+    duty = policy.probe_cycles / policy.probe_every
+    assert off <= len(tail) * duty * 1.5 + policy.probe_cycles
+
+
+def test_the_probe_reaches_positions_the_incumbent_never_drafts():
+    """The depth-conditioning bug, stated as a test.
+
+    A policy parked at depth zero drafts nothing, so no chain ever reaches
+    position one, so the acceptance curve there is the prior for the life of
+    the process however generous the text has become. Holding still is the one
+    move that cannot resolve this. The costly cost table below is what puts the
+    policy at zero; the text underneath it accepts nine drafts in ten.
+    """
+    expensive = {1: 10.0, 2: 400.0, 4: 1000.0, 6: 1600.0}
+    generous = [0.9] * 6
+
+    frozen = controller(max_depth=6, window=64, probe_every=0)
+    frozen.cost = CycleCostModel(seed=expensive)
+    depths = FakeWorkload(generous).run(frozen, 300)
+    assert set(depths) == {0}
+    assert frozen.acceptance_for(1).evidence(1) == 0.0
+
+    probing = controller(max_depth=6, window=64)
+    probing.cost = CycleCostModel(seed=expensive)
+    FakeWorkload(generous).run(probing, 300)
+    curve = probing.acceptance_for(1)
+    assert curve.evidence(1) > 0.0
+    assert curve.probability(1) > 0.7
+
+
+def test_hysteresis_holds_a_depth_against_a_candidate_that_barely_wins():
+    policy = controller(max_depth=6, hysteresis=0.5, dwell=0)
+    ceiling = 6
+    first = policy.stable_depth(1, FlatAcceptance(0.5), ceiling)
+    # A curve whose argmax is elsewhere, but only just: the margin refuses it.
+    nudged = FlatAcceptance(0.52)
+    for _ in range(20):
+        held = policy.stable_depth(1, nudged, ceiling)
+    assert held == first
+
+
+def test_a_candidate_that_wins_by_more_than_the_margin_takes_the_depth():
+    policy = controller(max_depth=6, hysteresis=0.05, dwell=2, probe_every=0)
+    ceiling = 6
+    first = policy.stable_depth(1, FlatAcceptance(0.2), ceiling)
+    for _ in range(20):
+        held = policy.stable_depth(1, FlatAcceptance(0.97), ceiling)
+    assert held > first
+
+
+def test_dwell_is_counted_in_decisions_and_not_in_cycles():
+    policy = controller(max_depth=6, hysteresis=0.0, dwell=5, probe_every=0)
+    policy.stable_depth(1, FlatAcceptance(0.2), 6)
+    generous = FlatAcceptance(0.97)
+    seen = [policy.stable_depth(1, generous, 6) for _ in range(5)]
+    assert seen[:4] == [seen[0]] * 4
+    assert seen[-1] != seen[0]
+
+
+# -- the cost model's own resting point -------------------------------------
+
+
+def test_one_width_forever_does_not_bend_the_price_of_the_others():
+    """The pooled fit's failure mode, as a regression test.
+
+    A policy that settles on depth 2 feeds the cost model width 3 and nothing
+    else. Under the pooled least-squares fit the seed points decayed away with
+    every observation and the determinant went to zero, so the price of width 5
+    -- the number that decides whether depth 4 is worth trying -- moved with
+    the *count* of width-3 cycles rather than with the machine.
+    """
+    cost = CycleCostModel()
+    early = None
+    for i in range(4000):
+        cost.observe(3, 21.0)
+        if i == 40:
+            early = cost.ms(5)
+    late = cost.ms(5)
+    assert early is not None
+    assert late == pytest.approx(early, rel=0.02)
+    assert cost.ms(3) == pytest.approx(21.0, abs=0.1)
+
+
+def test_a_width_below_the_sample_floor_is_priced_off_the_line():
+    cost = CycleCostModel(min_samples=8)
+    for _ in range(3):
+        cost.observe(2, 1.0)
+    assert not cost.measured(2)
+    assert cost.ms(2) > 5.0
+    for _ in range(6):
+        cost.observe(2, 1.0)
+    assert cost.measured(2)
+    assert cost.ms(2) == pytest.approx(1.0, abs=0.05)
+
+
+def test_a_width_that_stopped_being_run_decays_back_to_the_line():
+    cost = CycleCostModel(half_life=8.0, min_samples=4)
+    for _ in range(20):
+        cost.observe(6, 2.0)
+    assert cost.measured(6)
+    for _ in range(400):
+        cost.observe(1, 16.0)
+    assert not cost.measured(6)
+    assert cost.ms(6) > 5.0

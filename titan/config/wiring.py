@@ -238,6 +238,7 @@ def build_backend(config: TitanConfig, registry: Any) -> Any:
         TitanQwenFlashNext(model, prefill_chunk=config.scheduler.prefill_chunk),
         prime_mtp=config.speculation.enabled and config.speculation.mtp_prime_prompt,
         prime_window=config.speculation.mtp_prime_window,
+        release_after_prefill=config.scheduler.release_after_prefill,
     )
 
 

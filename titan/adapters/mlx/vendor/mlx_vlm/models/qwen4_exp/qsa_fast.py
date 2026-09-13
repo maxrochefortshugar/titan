@@ -128,10 +128,22 @@ def _portable_indexer_scores(
     queries: mx.array,
     pooled_keys: mx.array,
     head_dim: int,
+    pooled_keys_f32: mx.array | None = None,
 ) -> mx.array:
-    """Current float32 MLX QSA score reference."""
+    """Current float32 MLX QSA score reference.
+
+    ``pooled_keys_f32`` is the same bank already widened, kept by the cache and
+    extended a block at a time rather than recast a step at a time. Widening
+    bf16 to float32 is lossless, so passing it changes the scores by nothing at
+    all; it changes only how often the widening happens. See
+    ``Qwen4ExpQSAKVCache.pooled_indexer_keys_f32``.
+    """
 
     batch, query_tokens, query_heads, _ = queries.shape
+    if pooled_keys_f32 is not None:
+        if pooled_keys_f32.shape != pooled_keys.shape:
+            raise ValueError("QSA float32 pooled bank does not match the bank")
+        pooled_keys = pooled_keys_f32
     # Flatten the query-token and index-head axes so MLX emits one FP32 GEMM
     # for the chunk instead of a broadcasted batch of tiny matmuls.  Each
     # output dot product and the following head reduction are unchanged.
@@ -393,6 +405,7 @@ def contiguous_causal_gathered_qsa_decode(
     indexer_head_dim: int,
     compress_ratio: int,
     token_budget: int,
+    pooled_index_keys_f32: mx.array | None = None,
 ) -> mx.array:
     """Run exact batch-one QSA decode over only the selected K/V rows.
 
@@ -449,6 +462,7 @@ def contiguous_causal_gathered_qsa_decode(
             index_queries,
             pooled_index_keys,
             indexer_head_dim,
+            pooled_index_keys_f32,
         )
 
     selected_blocks = _native_topk_indices(block_scores, block_budget)

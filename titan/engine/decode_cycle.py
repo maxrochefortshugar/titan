@@ -379,18 +379,32 @@ is the whole reason the model is refitted at runtime.
 
 
 class CycleCostModel:
-    """Cycle milliseconds as a straight line in verify row width.
+    """Cycle milliseconds against verify row width: a table where it has
+    evidence, a line where it does not.
 
-    A line rather than a table, for two reasons. The policy has to price widths
-    it has never run -- that is the entire point of asking whether depth 4 is
-    worth it while running depth 2 -- and a table can only interpolate between
-    the widths it happens to hold. And the shape really is a line here: the
-    fixed cost is the host graph build (15.8 of the 18.1 ms measured at width
-    1) and the marginal cost is one more row through the same forward, so the
-    intercept is Python and the slope is the GPU.
+    ROUND4 section 1a measured the same configuration at 93.5 and 79.0 tok/s an
+    hour apart, and the column that moved with it was the depth the policy
+    chose. This class was half the reason. It used to pool every observation
+    into one weighted least-squares fit, and a policy that settles on one depth
+    only ever feeds it one width. Two things follow from that and both are bad.
+    The mass at a single ``x`` drives the regression's determinant to zero, so
+    the fit flips between "a line through one point and a decaying seed" and
+    the seed fallback, and which of the two a run is in depends on how many
+    cycles it has run rather than on the machine. And the seed points, which
+    are the only other widths in the sum, decay with every observation, so an
+    hour-old process prices width 6 off nothing at all.
 
-    Observations are decayed rather than windowed. Thermal drift alone was
-    measured at 10 to 16% on this machine, so a cost table that averages an
+    So: one decayed mean per width, and the line is fitted over those *means*,
+    one point per width, rather than over the raw observations. A width the
+    policy has run a lot contributes exactly as much to the line's shape as one
+    it ran twice, which is what stops the incumbent depth from bending the
+    price of every alternative toward itself. Widths with at least
+    ``min_weight`` of accumulated evidence are quoted from their own mean and
+    never from the line; the line exists only to price the widths the policy
+    has not run, which is the question a depth policy has to ask every cycle.
+
+    Observations are still decayed rather than windowed. Thermal drift alone
+    was measured at 10 to 16% on this machine, so a cost table that averages an
     hour of cycles is describing a machine that is no longer there.
     """
 
@@ -400,33 +414,47 @@ class CycleCostModel:
         seed: Mapping[int, float] = SEED_CYCLE_COST_MS,
         half_life: float = 512.0,
         seed_weight: float = 8.0,
+        min_samples: int = 8,
+        min_weight: float = 1.0,
+        own_half_life: float = 16.0,
     ) -> None:
-        if half_life <= 0:
-            raise ValueError("half_life must be positive")
+        if half_life <= 0 or own_half_life <= 0:
+            raise ValueError("half_life and own_half_life must be positive")
+        if min_samples < 1 or min_weight <= 0:
+            raise ValueError("min_samples and min_weight must be positive")
         self._decay = 0.5 ** (1.0 / half_life)
+        self._own_decay = 0.5 ** (1.0 / own_half_life)
         self._seed = dict(seed)
         self._seed_weight = float(seed_weight)
-        self._n = 0.0
-        self._sx = 0.0
-        self._sy = 0.0
-        self._sxx = 0.0
-        self._sxy = 0.0
-        for width, ms in self._seed.items():
-            self._add(float(width), float(ms), self._seed_weight)
+        self._min_samples = int(min_samples)
+        self._min_weight = float(min_weight)
+        # A width's price and a width's recency are two different questions and
+        # they need two different clocks.
+        #
+        # The price is an average over that width's *own* last ~``own_half_life``
+        # cycles, decayed in its own observations. A width the policy stopped
+        # running and then probed sixteen times has a price set by those sixteen
+        # probes, not by the four hundred cycles it ran an hour ago. Under a
+        # single clock shared with every other width, a stale price at a rarely
+        # run width takes thousands of cycles to wash out, and while it is
+        # washing out it is what pins the policy to the depth that produced it.
+        # That is a resting point, and it is the one that traps a policy at
+        # depth zero: nothing but a probe ever runs width two again.
+        #
+        # Recency is a weight decayed in *every* observation, and it decides
+        # only whether the width has been seen lately enough to quote at all.
+        self._own_weight: dict[int, float] = {}
+        self._own_total: dict[int, float] = {}
+        self._weight: dict[int, float] = {}
+        self._count: dict[int, int] = {}
         self.observations = 0
 
-    def _add(self, x: float, y: float, weight: float) -> None:
-        self._n += weight
-        self._sx += weight * x
-        self._sy += weight * y
-        self._sxx += weight * x * x
-        self._sxy += weight * x * y
-
+    # -- evidence ----------------------------------------------------------
     def observe(self, width: int, wall_ms: float) -> None:
         """Record one cycle. Outliers are dropped, not smoothed.
 
         A cycle that ran ten times its predicted cost is a prefill sharing the
-        thread, an SSD stall or a snapshot store, and folding it into the slope
+        thread, an SSD stall or a snapshot store, and folding it into the mean
         would price every future width off one event that had nothing to do
         with the row count.
         """
@@ -435,19 +463,96 @@ class CycleCostModel:
         predicted = self.ms(width)
         if wall_ms > 4.0 * predicted:
             return
-        for key in ("_n", "_sx", "_sy", "_sxx", "_sxy"):
-            setattr(self, key, getattr(self, key) * self._decay)
-        self._add(float(width), float(wall_ms), 1.0)
+        for key in list(self._weight):
+            self._weight[key] *= self._decay
+        index = int(width)
+        self._weight[index] = self._weight.get(index, 0.0) + 1.0
+        self._own_weight[index] = self._own_weight.get(index, 0.0) * self._own_decay + 1.0
+        self._own_total[index] = (
+            self._own_total.get(index, 0.0) * self._own_decay + float(wall_ms)
+        )
+        self._count[index] = self._count.get(index, 0) + 1
         self.observations += 1
+
+    def weight(self, width: int) -> float:
+        """Accumulated, decayed evidence at this width. Zero means the line."""
+        return self._weight.get(int(width), 0.0)
+
+    def discount(self, width: int, factor: float) -> None:
+        """Forget most of what is known about one width, on purpose.
+
+        Called when the policy starts a probe run at a width it has not been
+        running. Whatever price that width carries was measured under a regime
+        the policy has not observed since -- a different context length, a
+        different thermal state, a different kernel set -- and averaging eight
+        fresh cycles against four hundred stale ones is how a wrong price
+        survives the measurement sent to correct it.
+        """
+        index = int(width)
+        if index not in self._own_weight or not 0.0 <= factor <= 1.0:
+            return
+        self._own_weight[index] *= factor
+        self._own_total[index] *= factor
+
+    def measured(self, width: int) -> bool:
+        """Two gates, and they answer different questions.
+
+        ``min_samples`` is the sample count the brief asks for: a mean of two
+        cycles is not a price. ``min_weight`` is recency: a width measured
+        two hundred times an hour ago and never since has decayed to nothing,
+        and quoting its stale mean would be worse than the line, which at
+        least tracks the widths the machine is still running.
+        """
+        index = int(width)
+        return (
+            self._count.get(index, 0) >= self._min_samples
+            and self._weight.get(index, 0.0) >= self._min_weight
+        )
+
+    def mean(self, width: int) -> float | None:
+        """The width's own decayed mean, or ``None`` below the sample floor."""
+        index = int(width)
+        if not self.measured(index):
+            return None
+        return self._own_total[index] / self._own_weight[index]
+
+    # -- the line ----------------------------------------------------------
+    def _points(self) -> list[tuple[float, float, float]]:
+        """``(width, ms, weight)`` for the fit: one point per width.
+
+        A measured width contributes its own mean at unit weight. A seed width
+        the policy has not measured contributes the seed value at
+        ``seed_weight``, and a seed width it *has* measured contributes
+        nothing, because the measurement is the better answer and the seed
+        would only drag the line back toward the machine it was taken on.
+        """
+        points: list[tuple[float, float, float]] = []
+        for width in sorted(self._weight):
+            own = self.mean(width)
+            if own is not None:
+                points.append((float(width), own, 1.0))
+        measured = {int(p[0]) for p in points}
+        for width, ms in self._seed.items():
+            if int(width) not in measured and self._seed_weight > 0.0:
+                points.append((float(width), float(ms), self._seed_weight))
+        return points
 
     @property
     def fit(self) -> tuple[float, float]:
         """``(intercept, slope)`` in milliseconds."""
-        denominator = self._n * self._sxx - self._sx * self._sx
+        points = self._points()
+        if len(points) < 2:
+            return self._seed_fit()
+        n = sum(w for _, _, w in points)
+        sx = sum(w * x for x, _, w in points)
+        sy = sum(w * y for _, y, w in points)
+        sxx = sum(w * x * x for x, _, w in points)
+        sxy = sum(w * x * y for x, y, w in points)
+        denominator = n * sxx - sx * sx
         if denominator <= 1e-9:
             return self._seed_fit()
-        slope = (self._n * self._sxy - self._sx * self._sy) / denominator
-        intercept = (self._sy - slope * self._sx) / self._n
+        slope = (n * sxy - sx * sy) / denominator
+        intercept = (sy - slope * sx) / n
         if slope <= 0.0 or intercept <= 0.0:
             # A non-positive slope says wider cycles are free, which they are
             # not; it says the observations are degenerate. The seed is a worse
@@ -468,8 +573,13 @@ class CycleCostModel:
         return (sy - slope * sx) / n, slope
 
     def ms(self, width: int) -> float:
+        """The price of a cycle at this width. Its own mean, or the line."""
+        index = max(1, int(width))
+        own = self.mean(index)
+        if own is not None:
+            return max(1e-3, own)
         intercept, slope = self.fit
-        return max(1e-3, intercept + slope * max(1, int(width)))
+        return max(1e-3, intercept + slope * index)
 
 
 class PositionAcceptance:
@@ -525,6 +635,43 @@ class PositionAcceptance:
             return self._prior
         return min(1.0, max(0.0, self._hits[index] / trials))
 
+    def evidence(self, position: int) -> float:
+        """Trials at this position beyond the prior's own weight.
+
+        Zero means the position has never been drafted, so its probability is
+        the prior and not a measurement. The depth policy needs to know the
+        difference: a position it has never reached is the one thing a depth
+        policy cannot learn about by holding still, and it is what the probe
+        in :class:`ExpectedValueDepthController` exists to reach.
+        """
+        if position < 1:
+            return 0.0
+        index = min(int(position), self.max_depth)
+        return max(0.0, self._trials[index] - self._prior_weight)
+
+    def discount(self, position: int, factor: float) -> None:
+        """Forget most of the evidence at one position. The probe's companion.
+
+        A position the policy stopped drafting keeps whatever it last believed,
+        because nothing decays a counter nobody touches. That is correct while
+        the belief is fresh and wrong the moment the text moves on, and the
+        policy cannot tell the difference without drafting there again. So when
+        it does draft there again, it discounts first.
+        """
+        if position < 1 or not 0.0 <= factor <= 1.0:
+            return
+        index = min(int(position), self.max_depth)
+        self._hits[index] *= factor
+        self._trials[index] *= factor
+
+    def measured_depth(self) -> int:
+        """The deepest position with evidence of its own. Zero if none."""
+        deepest = 0
+        for position in range(1, self.max_depth + 1):
+            if self.evidence(position) > 0.0:
+                deepest = position
+        return deepest
+
     def expected_committed(self, depth: int) -> float:
         """Tokens a cycle at this depth commits, drafts plus the bonus."""
         total = 1.0
@@ -561,6 +708,38 @@ class ExpectedValueDepthController:
     curve; averaging them gives both the wrong depth. The cost table is shared
     because it describes the machine, and the acceptance curve is not because
     it describes the text.
+
+    ## Why the argmax alone is not the policy
+
+    ROUND4 section 1a measured the identical reference configuration at 93.5
+    and 79.0 tok/s an hour apart, with mean rows of 3.60 and 2.97. That is an
+    18% spread, larger than every kernel effect the same round went on to
+    measure, and it is not noise: it is a control loop with more than one
+    resting point. Three mechanisms put it there, and the policy answers all
+    three.
+
+    *The estimator learns cycle cost from cycles the policy itself shortened.*
+    A run that settles on depth 2 only ever feeds :class:`CycleCostModel`
+    width 3, and the pooled regression it used to keep would then price widths
+    4 and 5 off a determinant driven to zero by its own mass. That is fixed in
+    the cost model, which now keeps one decayed mean per width and fits the
+    line over the means rather than over the observations.
+
+    *The acceptance estimate is conditioned on the depth.*
+    ``PositionAcceptance`` can only learn about position *i* from a chain that
+    drafted *i* tokens, so at depth 2 positions 3 and above hold the prior
+    forever, whatever the text is actually doing. Holding still is the one
+    thing that cannot resolve this, so the policy does not hold still: every
+    ``probe_every`` decisions it spends one cycle at the depth above the
+    incumbent and one at the depth below, and both neighbours get real
+    evidence at both estimators. A probe is a row, not a rollback, so it costs
+    a fraction of a cycle and it changes nothing about what the model says.
+
+    *Nothing damped the switch.* An argmax over two values a per-cent apart
+    flips on noise, and each flip changes which width the cost model is fed,
+    which changes the argmax. A candidate now has to beat the incumbent by
+    ``hysteresis`` in expected tokens per millisecond, and the incumbent has to
+    have held for ``dwell`` decisions before it can be displaced at all.
     """
 
     def __init__(
@@ -573,9 +752,20 @@ class ExpectedValueDepthController:
         rows_budget: int = 32,
         cost: CycleCostModel | None = None,
         max_tracked: int = 64,
+        hysteresis: float = 0.06,
+        dwell: int = 8,
+        probe_every: int = 48,
+        probe_cycles: int = 8,
+        probe_discount: float = 0.3,
     ) -> None:
         if min_depth < 0 or max_depth < min_depth:
             raise ValueError("need 0 <= min_depth <= max_depth")
+        if hysteresis < 0.0:
+            raise ValueError("hysteresis must not be negative")
+        if dwell < 0 or probe_every < 0 or probe_cycles < 0:
+            raise ValueError("dwell, probe_every and probe_cycles must not be negative")
+        if not 0.0 <= probe_discount <= 1.0:
+            raise ValueError("probe_discount must be a fraction")
         self.max_depth = int(max_depth)
         self.min_depth = int(min_depth)
         self.adaptive = bool(adaptive)
@@ -583,12 +773,27 @@ class ExpectedValueDepthController:
         self.window = int(window)
         self.cost = cost or CycleCostModel()
         self.max_tracked = int(max_tracked)
+        self.hysteresis = float(hysteresis)
+        self.dwell = int(dwell)
+        self.probe_every = int(probe_every)
+        self.probe_cycles = int(probe_cycles)
+        self.probe_discount = float(probe_discount)
         # Kept so anything reading the old controller's rolling mean still
         # finds one, and so the two policies can be compared on one number.
         self.estimator = AcceptanceEstimator(window=window, initial=float(max_depth))
         self.shared = self._new_acceptance()
         self._by_sequence: dict[int, PositionAcceptance] = {}
         self.chosen: list[int] = []
+        # Per decision-track state. The shared track is keyed ``None`` so that
+        # ``plan_depth`` and ``next_depths_for`` do not fight over one
+        # incumbent while addressing different estimators.
+        self._incumbent: dict[Any, int] = {}
+        self._held: dict[Any, int] = {}
+        self._decisions: dict[Any, int] = {}
+        # track -> (depth being probed, decisions left in the run)
+        self._probe: dict[Any, tuple[int, int]] = {}
+        self.probes = 0
+        self.probe_runs = 0
 
     def _new_acceptance(self) -> PositionAcceptance:
         return PositionAcceptance(
@@ -622,6 +827,100 @@ class ExpectedValueDepthController:
         per_sequence = max(0, rows_budget // max(1, n_sequences) - 1)
         return max(self.min_depth, min(self.max_depth, per_sequence))
 
+    # -- convergence: hysteresis, dwell, and the probe ---------------------
+    def value_of(self, acceptance: PositionAcceptance, depth: int) -> float:
+        """Expected committed tokens per millisecond at this depth."""
+        return acceptance.expected_committed(depth) / self.cost.ms(depth + 1)
+
+    def _begin_probe(
+        self,
+        track: Any,
+        acceptance: PositionAcceptance,
+        held: int,
+        probe: int,
+    ) -> None:
+        """Start a probe run, discounting what is believed about its depth."""
+        self._probe[track] = (probe, max(0, self.probe_cycles - 1))
+        self.probes += 1
+        self.probe_runs += 1
+        factor = self.probe_discount
+        self.cost.discount(probe + 1, factor)
+        for position in range(min(held, probe) + 1, max(held, probe) + 1):
+            acceptance.discount(position, factor)
+
+    def stable_depth(
+        self, track: Any, acceptance: PositionAcceptance, ceiling: int
+    ) -> int:
+        """The depth this track will actually run, incumbent included.
+
+        The first decision on a track is the plain argmax: there is nothing to
+        be hysteretic about yet, and a policy that needed ``dwell`` decisions
+        before it could choose anything would spend its first cycles at a depth
+        no measurement chose. Afterwards the incumbent keeps the depth unless a
+        candidate is worth ``hysteresis`` more, and only once the incumbent has
+        held for ``dwell`` decisions.
+        """
+        floor = min(self.min_depth, ceiling)
+        held = self._incumbent.get(track)
+        decisions = self._decisions.get(track, 0)
+        self._decisions[track] = decisions + 1
+
+        if held is None:
+            chosen = self.best_depth(acceptance, ceiling)
+            self._incumbent[track] = chosen
+            self._held[track] = 0
+            return chosen
+
+        held = max(floor, min(held, ceiling))
+        # The probe comes before the comparison, and it does not disturb the
+        # incumbent: it is a measurement, not a decision. Alternating up and
+        # down means neither neighbour is the one the policy never prices.
+        #
+        # A probe is a *run* of cycles, not one cycle, and that is the whole
+        # difference between a probe that works and one that does not. Both
+        # estimators average over their own last few dozen observations at a
+        # position, so a single cycle at the neighbouring depth moves the
+        # estimate by about one part in ninety, and a policy in a wrong resting
+        # point needs a hundred and forty such cycles to climb out of it. Eight
+        # in a row, after discounting what was believed about that depth
+        # before, is a measurement the policy can act on the same minute.
+        running = self._probe.get(track)
+        if running is not None:
+            depth, left = running
+            if left > 0 and floor <= depth <= ceiling:
+                self._probe[track] = (depth, left - 1)
+                self.probes += 1
+                return depth
+            self._probe.pop(track, None)
+        if self.probe_every > 0 and self.probe_cycles > 0 and (
+            decisions % self.probe_every == 0
+        ):
+            direction = 1 if (decisions // self.probe_every) % 2 else -1
+            for candidate_probe in (held + direction, held - direction):
+                # Flipping when the first neighbour is out of range is not
+                # tidiness. Depth zero is an absorbing state -- a cycle that
+                # drafts nothing teaches the acceptance curve nothing and the
+                # cost model only width one -- and it is exactly the state
+                # where half the probes would otherwise be thrown away.
+                if floor <= candidate_probe <= ceiling and candidate_probe != held:
+                    self._begin_probe(track, acceptance, held, candidate_probe)
+                    return candidate_probe
+
+        self._held[track] = self._held.get(track, 0) + 1
+        candidate = self.best_depth(acceptance, ceiling)
+        if candidate == held:
+            return held
+        if self._held[track] < self.dwell:
+            return held
+        incumbent_value = self.value_of(acceptance, held)
+        if self.value_of(acceptance, candidate) <= incumbent_value * (
+            1.0 + self.hysteresis
+        ):
+            return held
+        self._incumbent[track] = candidate
+        self._held[track] = 0
+        return candidate
+
     # -- the Verifier port -------------------------------------------------
     def plan_depth(
         self,
@@ -634,7 +933,7 @@ class ExpectedValueDepthController:
         ceiling = self._ceiling(n_sequences, rows_budget)
         if not self.adaptive:
             return [min(self.max_depth, ceiling)] * n_sequences
-        return [self.best_depth(self.shared, ceiling)] * n_sequences
+        return [self.stable_depth(None, self.shared, ceiling)] * n_sequences
 
     def record(self, profile: CycleProfile, outcomes: Sequence[VerifyOutcome]) -> None:
         self.estimator.observe(outcomes)
@@ -668,7 +967,7 @@ class ExpectedValueDepthController:
             depths = [min(self.max_depth, ceiling)] * n
         else:
             depths = [
-                self.best_depth(self.acceptance_for(int(s)), ceiling)
+                self.stable_depth(int(s), self.acceptance_for(int(s)), ceiling)
                 for s in sequence_ids
             ]
         self.chosen = depths

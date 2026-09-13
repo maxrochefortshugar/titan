@@ -262,6 +262,13 @@ class SchedulerConfig:
     concurrent requests, which cost the overlay its whole concurrency win."""
     decode_rows_budget: int = 32
     """Total verify rows per cycle across all sequences."""
+    release_after_prefill: bool = False
+    """Drop MLX's buffer cache when the last prefill chunk lands.
+
+    ROUND5 step 2's second arm. The cache is a free-list rather than live data,
+    so releasing it cannot lose anything the decode needs; it trades the
+    reallocation of whatever the decode would have reused against a decode that
+    is not allocating underneath a 64k prefill's leftovers."""
 
     @property
     def memory_guard_soft_gb(self) -> float:

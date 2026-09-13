@@ -469,3 +469,136 @@ def test_qsa_fast_still_exports_the_pool_helper():
     phased bank's contract is stated against it; a rename would silently make
     the two banks different."""
     assert callable(qsa_fast.pool_completed_index_keys)
+
+
+# -- the float32 pooled bank (ROUND5 step 4) --------------------------------
+#
+# ``_portable_indexer_scores`` casts the whole pooled block bank to float32 on
+# every decode step, because which blocks win is a discrete choice and rounding
+# the products flips the ones near the cut-off. At 64k that is 16,000 slots of
+# 128 bf16 values read and 8 MB written, per layer, per token, over a bank that
+# has not changed since the prompt went in. ``qsa_pooled_bank_f32`` holds the
+# widened copy and extends it a block at a time instead.
+#
+# The claim these tests have to establish is not "close enough". Widening bf16
+# to float32 is lossless, so the held bank holds exactly the numbers the cast
+# produced, and the scores are bit-identical rather than one ULP apart. A
+# tolerance here would hide the only bug this path can have, which is the bank
+# and its offset drifting out of step with each other.
+
+
+def _pooled_pair(attention, length: int, seed: int = 5):
+    """The bf16 bank and the held float32 bank, from one warmed cache."""
+    cache = _warm_cache(length, seed)
+    indexer = attention.indexer
+    bank = cache.pooled_indexer_keys(
+        indexer.compress_ratio,
+        indexer.k_layernorm,
+        indexer._apply_rope,
+        cache_tag=indexer,
+    )
+    held = cache.pooled_indexer_keys_f32(
+        indexer.compress_ratio,
+        indexer.k_layernorm,
+        indexer._apply_rope,
+        cache_tag=indexer,
+    )
+    return cache, bank, held
+
+
+@pytest.mark.parametrize("length", [2048, 2052, 8192, 8196, 12288])
+def test_the_held_bank_is_the_cast_bank_bit_for_bit(attention, length):
+    """Across both indexer thresholds, and just past each of them."""
+    _cache, bank, held = _pooled_pair(attention, length)
+    assert held.shape == bank.shape
+    assert held.dtype == mx.float32
+    mx.eval(bank, held)
+    assert np.array_equal(
+        np.array(held, copy=False), np.array(bank.astype(mx.float32), copy=False)
+    )
+
+
+@pytest.mark.parametrize("length", [2048, 8192, 12288])
+def test_the_scores_are_identical_and_not_merely_close(attention, length):
+    _cache, bank, held = _pooled_pair(attention, length)
+    mx.random.seed(3)
+    queries = mx.random.normal(
+        (1, 1, attention.indexer.n_heads, attention.indexer.head_dim)
+    ).astype(mx.bfloat16)
+    cast = qsa_fast._portable_indexer_scores(
+        queries, bank[:, None][:, 0], attention.indexer.head_dim
+    )
+    kept = qsa_fast._portable_indexer_scores(
+        queries, bank[:, None][:, 0], attention.indexer.head_dim, held
+    )
+    mx.eval(cast, kept)
+    assert np.array_equal(np.array(cast, copy=False), np.array(kept, copy=False))
+
+
+def test_the_held_bank_extends_rather_than_rebuilds(attention):
+    """The offset is the whole mechanism: a bank that rebuilds buys nothing."""
+    indexer = attention.indexer
+    cache = _warm_cache(8192, seed=7)
+    first = cache.pooled_indexer_keys_f32(
+        indexer.compress_ratio, indexer.k_layernorm, indexer._apply_rope,
+        cache_tag=indexer,
+    )
+    mx.eval(first)
+    buffer_before = cache._pooled_index_keys_f32
+    offset_before = cache._pooled_f32_offset
+    # Nothing new: the same call must not touch the buffer or the offset.
+    again = cache.pooled_indexer_keys_f32(
+        indexer.compress_ratio, indexer.k_layernorm, indexer._apply_rope,
+        cache_tag=indexer,
+    )
+    assert cache._pooled_index_keys_f32 is buffer_before
+    assert cache._pooled_f32_offset == offset_before
+    assert again.shape == first.shape
+    # Four more raw index tokens is one more complete block, and only that
+    # block's slot should be written.
+    cache.update_indexer(
+        mx.random.normal((1, 4, INDEXER_DIM)).astype(mx.bfloat16),
+        mx.arange(8192, 8196, dtype=mx.int32)[None],
+    )
+    grown = cache.pooled_indexer_keys_f32(
+        indexer.compress_ratio, indexer.k_layernorm, indexer._apply_rope,
+        cache_tag=indexer,
+    )
+    assert cache._pooled_f32_offset == offset_before + 1
+    assert grown.shape[1] == first.shape[1] + 1
+    mx.eval(grown)
+    assert np.array_equal(
+        np.array(grown[:, : first.shape[1]], copy=False),
+        np.array(first, copy=False),
+    )
+
+
+def test_the_held_bank_is_dropped_when_the_indexer_is(attention):
+    indexer = attention.indexer
+    cache = _warm_cache(8192, seed=9)
+    cache.pooled_indexer_keys_f32(
+        indexer.compress_ratio, indexer.k_layernorm, indexer._apply_rope,
+        cache_tag=indexer,
+    )
+    assert cache._pooled_index_keys_f32 is not None
+    cache._invalidate_pooled_indexer()
+    assert cache._pooled_index_keys_f32 is None
+    assert cache._pooled_f32_offset == 0
+
+
+def test_a_mismatched_float32_bank_is_refused_rather_than_used(attention):
+    """The one bug the path can have, made loud."""
+    _cache, bank, held = _pooled_pair(attention, 8192)
+    mx.random.seed(4)
+    queries = mx.random.normal(
+        (1, 1, attention.indexer.n_heads, attention.indexer.head_dim)
+    ).astype(mx.bfloat16)
+    with pytest.raises(ValueError):
+        qsa_fast._portable_indexer_scores(
+            queries, bank, attention.indexer.head_dim, held[:, :-1]
+        )
+
+
+def test_the_path_is_off_by_default_and_nameable(attention):
+    assert forward_paths.enabled("qsa_pooled_bank_f32") is False
+    assert "qsa_pooled_bank_f32" in forward_paths.DESCRIPTIONS

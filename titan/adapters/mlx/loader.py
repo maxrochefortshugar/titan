@@ -386,16 +386,6 @@ def load_model(
     model_dir = Path(model_dir)
     from .checkpoint import checkpoint_mtp_weight_prefix
 
-    if wait_for_memory:
-        # Every real load goes through here, server or bench harness. macOS
-        # releases a dead process's image lazily, so a load started seconds
-        # after another model process exited can overlap two 73 GB images and
-        # swap the machine into a freeze (docs/ops/INCIDENTS.md). Wait for the
-        # headroom first; refuse after the timeout rather than start anyway.
-        from titan.observability.memory_guard import wait_for_headroom
-
-        need_gb = _checkpoint_size_gb(model_dir) + 8.0
-        wait_for_headroom(need_gb, timeout_s=180.0, log=logger.warning)
 
     prefix = checkpoint_mtp_weight_prefix(model_dir) if mtp_enabled else None
     config = build_config(
@@ -409,6 +399,17 @@ def load_model(
         mtp_enabled=bool(mtp_enabled and prefix),
         fuse_gate_up=fuse_gate_up,
     )
+    if wait_for_memory:
+        # Every real load goes through here, server or bench harness. macOS
+        # releases a dead process's image lazily, so a load started seconds
+        # after another model process exited can overlap two 73 GB images and
+        # swap the machine into a freeze (docs/ops/INCIDENTS.md). The need is
+        # what the plan will actually materialise (dropped vision and n-gram
+        # shards excluded), plus a margin for activations and the cache.
+        from titan.observability.memory_guard import wait_for_headroom
+
+        need_gb = plan_resident_gb(plan) + 8.0
+        wait_for_headroom(need_gb, timeout_s=180.0, log=logger.warning)
     model = Model(config)
     if fuse_gate_up:
         # Before quantisation: the plan's quant specs are keyed by the fused
@@ -470,12 +471,17 @@ def fuse_switch_glu_modules(model) -> int:
     return count
 
 
-def _checkpoint_size_gb(model_dir: Path) -> float:
-    """Sum of the safetensors shards, the memory a load will need."""
+_DTYPE_BYTES = {"BF16": 2, "F16": 2, "F32": 4, "U32": 4, "I32": 4, "U8": 1, "I8": 1, "I64": 8, "U16": 2, "I16": 2, "F64": 8}
+
+
+def plan_resident_gb(plan: LoaderPlan) -> float:
+    """Bytes the plan materialises on device: loaded and fused entries only."""
     total = 0
-    for f in Path(model_dir).glob("*.safetensors"):
-        try:
-            total += f.stat().st_size
-        except OSError:
-            pass
+    for entry in plan.entries:
+        if entry.action not in (LOAD, FUSE) or not entry.shape:
+            continue
+        n = 1
+        for d in entry.shape:
+            n *= int(d)
+        total += n * _DTYPE_BYTES.get(str(entry.dtype or "").upper(), 2)
     return total / 1024 ** 3 if total else 75.0

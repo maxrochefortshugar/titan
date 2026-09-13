@@ -1187,6 +1187,18 @@ class EngineLoop:
         )
         if chunk.is_last:
             sequence.phase = SequencePhase.DECODING
+            # Resident bytes either side of the prompt, if the backend
+            # sampled them. ROUND4 could not say why a kernel that fires
+            # only on prefill-shaped calls costs a 64k decode, and named
+            # this sample as the missing experiment.
+            memory = getattr(self.backend, "prefill_memory", None)
+            if memory:
+                self.profiler.event(
+                    "prefill_done",
+                    sequence=int(sequence.sequence_id),
+                    tokens=chunk.end,
+                    **{str(k): float(v) for k, v in memory.items()},
+                )
 
     def _run_decode(self) -> bool:
         if not self._live:

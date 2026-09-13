@@ -56,6 +56,7 @@ DEFAULTS: dict[str, bool] = {
     "compiled_gated_residual": True,
     "cached_norm_scale": True,
     "compiled_decode_layer": False,
+    "qsa_pooled_bank_f32": False,
 }
 
 #: The paths this workstream added, as opposed to the ones it inherited.
@@ -88,6 +89,11 @@ DESCRIPTIONS: dict[str, str] = {
     "cached_norm_scale": (
         "Use the RMSNorm scale folded at load time rather than rebuilding "
         "1 + weight every call."
+    ),
+    "qsa_pooled_bank_f32": (
+        "Hold the QSA pooled block bank in float32 on the cache and extend it "
+        "a block at a time, instead of casting the whole bank on every decode "
+        "step. Bit-identical scores; 8 MB a layer instead of 4 at 64k."
     ),
     "compiled_decode_layer": (
         "Run a decoder layer as one traced graph, state in and state out. "

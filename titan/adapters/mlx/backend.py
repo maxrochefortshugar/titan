@@ -58,9 +58,20 @@ class MLXModelBackend:
         *,
         prime_mtp: bool = False,
         prime_window: int = 0,
+        release_after_prefill: bool = False,
     ):
         self.model = model
         self.prime_mtp = bool(prime_mtp)
+        self.release_after_prefill = bool(release_after_prefill)
+        self.prefill_memory: dict[str, float] = {}
+        """Resident bytes either side of the last prefill chunk, in MB.
+
+        ROUND4 section 1c could not explain why ``gdn_chunk_scan``, which fires
+        only on prefill-shaped calls, costs 13.2% of a 64k decode, and named
+        the missing experiment: sample the memory either side of the prefill,
+        per op. This is that sample. It is three host-side counters and no
+        device query, so it does not violate the one-sync-per-step rule the
+        2026-09-12 panic produced."""
         self.prime_window = max(0, int(prime_window))
         """How much of the prompt's tail the priming fold covers. 0 is all of it.
 
@@ -208,7 +219,40 @@ class MLXModelBackend:
             # A plan boundary: the cache will be asked to serialise it when the
             # sequence retires, so it outlives every rollback copy.
             model_state.stage_snapshot(pinned=True)
+        if tokens_after == 0:
+            self._close_prefill()
         return None if result.logits is None else _Logits(result.logits)
+
+    # -- the prefill/decode boundary --------------------------------------
+    @staticmethod
+    def memory_snapshot() -> dict[str, float]:
+        """Active, cached and peak device bytes, in MB. Host-side, no sync."""
+        return {
+            "active_mb": mx.get_active_memory() / (1024.0 * 1024.0),
+            "cache_mb": mx.get_cache_memory() / (1024.0 * 1024.0),
+            "peak_mb": mx.get_peak_memory() / (1024.0 * 1024.0),
+        }
+
+    def _close_prefill(self) -> None:
+        """Sample memory at the last prefill chunk, and optionally release it.
+
+        ``release_after_prefill`` drops MLX's buffer cache once the prompt is
+        in. The cache is a free-list, not live data, so dropping it cannot lose
+        anything the decode still needs; what it costs is the reallocation of
+        whatever the decode would have reused, and what it buys -- if ROUND4's
+        residency hypothesis is right -- is a decode that is not allocating
+        underneath a 64k prefill's leftovers. Which of the two it is, is the
+        measurement in ROUND5 step 2.
+        """
+        before = self.memory_snapshot()
+        if self.release_after_prefill:
+            mx.clear_cache()
+        after = self.memory_snapshot()
+        self.prefill_memory = {
+            **{f"pre_{k}": round(v, 1) for k, v in before.items()},
+            **{f"post_{k}": round(v, 1) for k, v in after.items()},
+            "released_mb": round(before["cache_mb"] - after["cache_mb"], 1),
+        }
 
     def decode(
         self,
