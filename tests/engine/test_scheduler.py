@@ -493,3 +493,35 @@ def test_every_prefill_chunk_is_told_how_much_of_the_sequence_follows_it():
 
     ends = [2048, 4096, 4608, 4999]
     assert backend.prefill_tokens_after == [len(prompt) - e for e in ends]
+
+
+def test_the_backend_is_told_when_the_prompt_is_in():
+    """The prefill/decode boundary is a scheduler fact, not a backend one.
+
+    A backend that samples resident memory or drops its buffer cache when the
+    prompt lands needs to know which chunk was the last, and it cannot read
+    that off ``tokens_after``: prefill plans stop one token short of the
+    prompt, so the final chunk is handed one rather than zero. ROUND5 step 2
+    measured three arms with the memory line missing from all of them for
+    exactly this reason.
+    """
+    loop, backend, _tokenizer = build_loop()
+    prompt = tuple(range(5000))
+    loop.submit(make_request(prompt, max_tokens=2), Sink())
+
+    # Four chunks: 2048, 4096, 4608, 4999. Nothing is closed until the last.
+    for expected in (0, 0, 0, 1):
+        loop.step()
+        assert backend.close_prefill_calls == expected
+
+    assert backend.prefill_tokens_after[-1] == 1
+
+
+def test_the_prompt_is_closed_once_per_sequence_and_not_once_per_turn():
+    """Decode turns keep running after the boundary, and none of them is a
+    second boundary. A backend that released its buffer cache on every turn
+    would pay the reallocation on every token."""
+    loop, backend, _tokenizer = build_loop()
+    loop.submit(make_request(tuple(range(3001)), max_tokens=8), Sink())
+    drain(loop)
+    assert backend.close_prefill_calls == 1

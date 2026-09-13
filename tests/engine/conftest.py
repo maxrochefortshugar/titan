@@ -108,6 +108,10 @@ class FakeBackend:
         self.prefill_tokens_after: list[int] = []
         self.truncations: list[tuple[int, int]] = []
         self.staged: list[tuple[int, int]] = []
+        # How many times the scheduler said the prompt was in. A real backend
+        # samples resident memory here and may drop the buffer cache; this one
+        # counts, because the bug worth catching is the call never arriving.
+        self.close_prefill_calls = 0
 
     # -- the oracle the tests compare against ------------------------------
     def argmax_after(self, context: Sequence[int]) -> int:
@@ -185,6 +189,9 @@ class FakeBackend:
         if snapshot:
             entry.snapshots.add(len(entry.tokens))
         return None
+
+    def close_prefill(self) -> None:
+        self.close_prefill_calls += 1
 
     def decode(self, states: Sequence[StateHandle], tokens: Sequence[int]) -> None:
         raise AssertionError("the engine goes through verify, never decode")

@@ -1,0 +1,138 @@
+[
+ {
+  "size": 4096,
+  "ms": 4614.24,
+  "tok_s": 887.7,
+  "gap_ms": null,
+  "after_snapshot": 0,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4102.92,
+  "tok_s": 998.3,
+  "gap_ms": 37.11,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4068.39,
+  "tok_s": 1006.8,
+  "gap_ms": 31.37,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4080.48,
+  "tok_s": 1003.8,
+  "gap_ms": 33.37,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4167.15,
+  "tok_s": 982.9,
+  "gap_ms": 30.88,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4185.47,
+  "tok_s": 978.6,
+  "gap_ms": 31.15,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4166.94,
+  "tok_s": 983.0,
+  "gap_ms": 30.83,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4219.64,
+  "tok_s": 970.7,
+  "gap_ms": 29.63,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4289.59,
+  "tok_s": 954.9,
+  "gap_ms": 30.83,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4311.91,
+  "tok_s": 949.9,
+  "gap_ms": 31.2,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4332.73,
+  "tok_s": 945.4,
+  "gap_ms": 31.39,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4361.1,
+  "tok_s": 939.2,
+  "gap_ms": 29.73,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4378.96,
+  "tok_s": 935.4,
+  "gap_ms": 31.39,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4412.4,
+  "tok_s": 928.3,
+  "gap_ms": 31.81,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 4096,
+  "ms": 4470.1,
+  "tok_s": 916.3,
+  "gap_ms": 31.48,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 3072,
+  "ms": 3631.07,
+  "tok_s": 846.0,
+  "gap_ms": 31.63,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 266,
+  "ms": 592.33,
+  "tok_s": 449.1,
+  "gap_ms": 25.79,
+  "after_snapshot": 1,
+  "snapshot": 0
+ }
+]

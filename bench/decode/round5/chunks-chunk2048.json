@@ -1,0 +1,266 @@
+[
+ {
+  "size": 2048,
+  "ms": 1447.27,
+  "tok_s": 1415.1,
+  "gap_ms": null,
+  "after_snapshot": 0,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2264.95,
+  "tok_s": 904.2,
+  "gap_ms": 30.7,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2202.28,
+  "tok_s": 929.9,
+  "gap_ms": 26.81,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2137.34,
+  "tok_s": 958.2,
+  "gap_ms": 22.53,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2156.63,
+  "tok_s": 949.6,
+  "gap_ms": 21.31,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2138.08,
+  "tok_s": 957.9,
+  "gap_ms": 22.65,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2183.37,
+  "tok_s": 938.0,
+  "gap_ms": 53.43,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2194.98,
+  "tok_s": 933.0,
+  "gap_ms": 21.51,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2273.68,
+  "tok_s": 900.7,
+  "gap_ms": 23.86,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2229.66,
+  "tok_s": 918.5,
+  "gap_ms": 23.45,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2220.36,
+  "tok_s": 922.4,
+  "gap_ms": 27.08,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2229.29,
+  "tok_s": 918.7,
+  "gap_ms": 22.17,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2243.3,
+  "tok_s": 912.9,
+  "gap_ms": 23.05,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2242.89,
+  "tok_s": 913.1,
+  "gap_ms": 21.82,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2260.51,
+  "tok_s": 906.0,
+  "gap_ms": 25.02,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2285.9,
+  "tok_s": 895.9,
+  "gap_ms": 25.21,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2282.61,
+  "tok_s": 897.2,
+  "gap_ms": 25.84,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2269.16,
+  "tok_s": 902.5,
+  "gap_ms": 23.54,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2288.86,
+  "tok_s": 894.8,
+  "gap_ms": 22.1,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2313.64,
+  "tok_s": 885.2,
+  "gap_ms": 23.22,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2311.44,
+  "tok_s": 886.0,
+  "gap_ms": 21.01,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2310.63,
+  "tok_s": 886.3,
+  "gap_ms": 23.79,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2345.6,
+  "tok_s": 873.1,
+  "gap_ms": 23.7,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2321.84,
+  "tok_s": 882.1,
+  "gap_ms": 25.09,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2325.18,
+  "tok_s": 880.8,
+  "gap_ms": 48.81,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2355.12,
+  "tok_s": 869.6,
+  "gap_ms": 22.33,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2379.48,
+  "tok_s": 860.7,
+  "gap_ms": 24.48,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2381.6,
+  "tok_s": 859.9,
+  "gap_ms": 22.55,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2381.73,
+  "tok_s": 859.9,
+  "gap_ms": 24.9,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2361.06,
+  "tok_s": 867.4,
+  "gap_ms": 26.03,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2418.41,
+  "tok_s": 846.8,
+  "gap_ms": 23.11,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 1024,
+  "ms": 1376.21,
+  "tok_s": 744.1,
+  "gap_ms": 25.01,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 266,
+  "ms": 607.59,
+  "tok_s": 437.8,
+  "gap_ms": 17.54,
+  "after_snapshot": 1,
+  "snapshot": 0
+ }
+]

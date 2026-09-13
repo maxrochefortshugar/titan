@@ -1,0 +1,266 @@
+[
+ {
+  "size": 2048,
+  "ms": 1460.45,
+  "tok_s": 1402.3,
+  "gap_ms": null,
+  "after_snapshot": 0,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2259.24,
+  "tok_s": 906.5,
+  "gap_ms": 29.41,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2182.4,
+  "tok_s": 938.4,
+  "gap_ms": 29.13,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2130.26,
+  "tok_s": 961.4,
+  "gap_ms": 28.19,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2145.73,
+  "tok_s": 954.5,
+  "gap_ms": 22.89,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2149.34,
+  "tok_s": 952.8,
+  "gap_ms": 25.43,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2179.6,
+  "tok_s": 939.6,
+  "gap_ms": 23.09,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2181.68,
+  "tok_s": 938.7,
+  "gap_ms": 22.24,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2271.61,
+  "tok_s": 901.6,
+  "gap_ms": 25.55,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2231.32,
+  "tok_s": 917.8,
+  "gap_ms": 25.08,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2217.61,
+  "tok_s": 923.5,
+  "gap_ms": 23.51,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2204.07,
+  "tok_s": 929.2,
+  "gap_ms": 23.59,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2250.46,
+  "tok_s": 910.0,
+  "gap_ms": 21.06,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2250.68,
+  "tok_s": 909.9,
+  "gap_ms": 19.11,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2257.99,
+  "tok_s": 907.0,
+  "gap_ms": 20.97,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2231.62,
+  "tok_s": 917.7,
+  "gap_ms": 56.23,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2268.4,
+  "tok_s": 902.8,
+  "gap_ms": 48.83,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2272.12,
+  "tok_s": 901.4,
+  "gap_ms": 21.43,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2279.66,
+  "tok_s": 898.4,
+  "gap_ms": 25.0,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2274.61,
+  "tok_s": 900.4,
+  "gap_ms": 25.11,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2316.53,
+  "tok_s": 884.1,
+  "gap_ms": 24.24,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2293.48,
+  "tok_s": 893.0,
+  "gap_ms": 24.76,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2327.19,
+  "tok_s": 880.0,
+  "gap_ms": 24.31,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2333.29,
+  "tok_s": 877.7,
+  "gap_ms": 23.83,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2344.74,
+  "tok_s": 873.4,
+  "gap_ms": 24.51,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2366.42,
+  "tok_s": 865.4,
+  "gap_ms": 23.82,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2343.43,
+  "tok_s": 873.9,
+  "gap_ms": 25.93,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2332.17,
+  "tok_s": 878.2,
+  "gap_ms": 23.04,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2358.78,
+  "tok_s": 868.2,
+  "gap_ms": 54.68,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2402.48,
+  "tok_s": 852.5,
+  "gap_ms": 21.82,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2395.89,
+  "tok_s": 854.8,
+  "gap_ms": 25.63,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 1024,
+  "ms": 1420.95,
+  "tok_s": 720.6,
+  "gap_ms": 25.57,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 266,
+  "ms": 586.38,
+  "tok_s": 453.6,
+  "gap_ms": 17.45,
+  "after_snapshot": 1,
+  "snapshot": 0
+ }
+]

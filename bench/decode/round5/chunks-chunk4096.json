@@ -1,0 +1,266 @@
+[
+ {
+  "size": 2048,
+  "ms": 1449.61,
+  "tok_s": 1412.8,
+  "gap_ms": null,
+  "after_snapshot": 0,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2257.4,
+  "tok_s": 907.2,
+  "gap_ms": 29.93,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2219.46,
+  "tok_s": 922.7,
+  "gap_ms": 26.54,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2129.54,
+  "tok_s": 961.7,
+  "gap_ms": 22.41,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2129.08,
+  "tok_s": 961.9,
+  "gap_ms": 21.99,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2127.25,
+  "tok_s": 962.7,
+  "gap_ms": 31.15,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2168.78,
+  "tok_s": 944.3,
+  "gap_ms": 21.53,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2192.96,
+  "tok_s": 933.9,
+  "gap_ms": 22.09,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2295.25,
+  "tok_s": 892.3,
+  "gap_ms": 29.57,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2216.43,
+  "tok_s": 924.0,
+  "gap_ms": 24.17,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2234.98,
+  "tok_s": 916.3,
+  "gap_ms": 22.12,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2247.43,
+  "tok_s": 911.3,
+  "gap_ms": 21.65,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2192.96,
+  "tok_s": 933.9,
+  "gap_ms": 22.51,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2218.27,
+  "tok_s": 923.2,
+  "gap_ms": 49.49,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2237.85,
+  "tok_s": 915.2,
+  "gap_ms": 64.85,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2252.84,
+  "tok_s": 909.1,
+  "gap_ms": 51.36,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2286.34,
+  "tok_s": 895.8,
+  "gap_ms": 36.34,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2271.47,
+  "tok_s": 901.6,
+  "gap_ms": 23.71,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2291.41,
+  "tok_s": 893.8,
+  "gap_ms": 25.2,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2290.74,
+  "tok_s": 894.0,
+  "gap_ms": 24.69,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2307.85,
+  "tok_s": 887.4,
+  "gap_ms": 23.66,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2312.35,
+  "tok_s": 885.7,
+  "gap_ms": 21.18,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2306.15,
+  "tok_s": 888.1,
+  "gap_ms": 23.61,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2314.07,
+  "tok_s": 885.0,
+  "gap_ms": 23.51,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2328.28,
+  "tok_s": 879.6,
+  "gap_ms": 21.59,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2330.43,
+  "tok_s": 878.8,
+  "gap_ms": 54.02,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2346.5,
+  "tok_s": 872.8,
+  "gap_ms": 24.26,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2380.25,
+  "tok_s": 860.4,
+  "gap_ms": 22.78,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2373.57,
+  "tok_s": 862.8,
+  "gap_ms": 23.28,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2384.83,
+  "tok_s": 858.8,
+  "gap_ms": 25.03,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 2048,
+  "ms": 2358.71,
+  "tok_s": 868.3,
+  "gap_ms": 21.57,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 1024,
+  "ms": 1402.86,
+  "tok_s": 729.9,
+  "gap_ms": 24.52,
+  "after_snapshot": 1,
+  "snapshot": 1
+ },
+ {
+  "size": 266,
+  "ms": 551.27,
+  "tok_s": 482.5,
+  "gap_ms": 19.49,
+  "after_snapshot": 1,
+  "snapshot": 0
+ }
+]

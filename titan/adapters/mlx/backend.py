@@ -214,7 +214,7 @@ class MLXModelBackend:
             # sequence retires, so it outlives every rollback copy.
             model_state.stage_snapshot(pinned=True)
         if tokens_after == 0:
-            self._close_prefill()
+            self.close_prefill()
         return None if result.logits is None else _Logits(result.logits)
 
     def _prefill_forward(
@@ -251,8 +251,18 @@ class MLXModelBackend:
             "peak_mb": mx.get_peak_memory() / (1024.0 * 1024.0),
         }
 
-    def _close_prefill(self) -> None:
+    def close_prefill(self) -> None:
         """Sample memory at the last prefill chunk, and optionally release it.
+
+        Public because ``tokens_after`` cannot be the trigger on a served
+        request. Prefill plans stop one token short of the prompt, so the last
+        chunk is handed a count of one and never zero, and this method spent
+        ROUND5 step 2 never being called: the memory line was missing from
+        every arm and ``release_after_prefill`` released nothing. The
+        scheduler cut the prompt up and is the only party that knows which
+        chunk was the last, so the scheduler is what calls this. The
+        ``tokens_after == 0`` call stays for a caller that hands over a whole
+        prompt in one piece, which is what the adapter tests do.
 
         ``release_after_prefill`` drops MLX's buffer cache once the prompt is
         in. The cache is a free-list, not live data, so dropping it cannot lose

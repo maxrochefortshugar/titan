@@ -1187,6 +1187,14 @@ class EngineLoop:
         )
         if chunk.is_last:
             sequence.phase = SequencePhase.DECODING
+            # The prompt is in, and the backend cannot work that out on its
+            # own: prefill plans stop one token short, so the last chunk's
+            # ``tokens_after`` is one rather than zero. A backend watching for
+            # zero never closes, which is exactly what happened to ROUND5
+            # step 2's first pass.
+            close = getattr(self.backend, "close_prefill", None)
+            if close is not None:
+                self._guarded("backend.close_prefill", (sequence,), close)
             # Resident bytes either side of the prompt, if the backend
             # sampled them. ROUND4 could not say why a kernel that fires
             # only on prefill-shaped calls costs a 64k decode, and named
