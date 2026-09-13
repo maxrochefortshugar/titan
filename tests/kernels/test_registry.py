@@ -312,6 +312,7 @@ def test_the_phase_is_restored_even_when_the_block_raises():
 
 
 def test_a_stale_prefill_only_name_is_rejected_like_a_stale_bisect_flag():
-    r = build_registry(KernelConfig(prefill_only=("no_such_op",)))
+    # build_registry validates eagerly, so the stale name is rejected at
+    # construction; either point of rejection satisfies the contract.
     with pytest.raises(ConfigError):
-        r.validate()
+        build_registry(KernelConfig(prefill_only=("no_such_op",))).validate()
