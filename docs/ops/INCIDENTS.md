@@ -20,7 +20,7 @@ What is different from the ordinary path: forced evaluation of every intermediat
 
 All three panics happened with a 70 GB model resident plus a large additional GPU working set (a 32 GB resident table; per-scope forced intermediates at 64k; compiled traces and per-width Metal specialisation). On 2026-09-11 the hardening script raised `iogpu.wired_limit_mb` from the default (about 96 GB on a 128 GB machine, 75%) to 118 GB and installed a LaunchDaemon that reapplies it at boot. That lets the GPU wire nearly all of physical memory, and a GPU-side stall while the kernel cannot page is what a watchdogd timeout with idle CPUs looks like. The 110 GB MLX hard limit sat above the default cap, so it never protected anything.
 
-Fix: restore the default wired limit (`sudo sysctl iogpu.wired_limit_mb=0`, delete `/Library/LaunchDaemons/io.bitwrite.iogpu-wired-limit.plist`), and hold Titan's process ceiling below the default cap: `scheduler.memory_guard_gb = 90` (the MLX hard limit follows it). Until the wired limit is restored, no run with a GPU working set beyond the plain served path.
+Fix: restore the default wired limit (set to 100 GB on 2026-09-13, `iogpu.wired_limit_mb=102400`, daemon updated to match), and hold Titan's process ceiling below the default cap: `scheduler.memory_guard_gb = 90` (the MLX hard limit follows it). Until the wired limit is restored, no run with a GPU working set beyond the plain served path.
 
 ## Rules
 
