@@ -254,7 +254,7 @@ class SchedulerConfig:
     """Only one sequence prefills at a time, and never during a decode cycle.
     Batched prefill loses the gathered sparse-attention arm and materialises a
     134 MB mask per QSA layer at 65k."""
-    memory_guard_gb: float = 110.0
+    memory_guard_gb: float = 90.0
     """Admission gate only, never a throttle on running work."""
     memory_guard_soft_fraction: float = 0.85
     """Above this fraction of the guard, admission stops taking new work but

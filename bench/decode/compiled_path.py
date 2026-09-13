@@ -889,15 +889,79 @@ def _prefixed(pair: tuple[float, float], prefix: str) -> dict:
     return {f"{prefix}_build_ms": pair[0], f"{prefix}_step_ms": pair[1]}
 
 
+def _commit(arm) -> None:
+    """Keep the state a compiled step returned instead of rewinding it."""
+    pending = getattr(arm, "_pending", None)
+    if pending is not None:
+        arm.state = pending
+
+
+def _greedy_ids(arm, *, count: int, vocab: int) -> list[int]:
+    """*count* greedy tokens from where the arm stands, one eval per token.
+
+    This is the ordinary decode shape and nothing else: the whole step is
+    built, the step's outputs and the argmax are evaluated together once, and
+    the token is read. No per-scope evaluation, no per-scope synchronize.
+    """
+    token = _tokens(1, vocab)
+    ids: list[int] = []
+    for _ in range(count):
+        result = arm.step(token)
+        arrays = arm.outputs(result)
+        nxt = mx.argmax(arrays[0][:, -1, :], axis=-1)
+        mx.eval(arrays + [nxt])
+        _commit(arm)
+        ids.append(int(nxt.item()))
+        token = nxt.reshape(1, 1).astype(mx.int64)
+    return ids
+
+
+def _trace_shape(compiled_arm) -> dict:
+    """Segments, islands and the trace count a width grid implies."""
+    plan = list(getattr(compiled_arm.model, "plan", ()) or ())
+    segments = sum(1 for kind, _ in plan if kind == "traced") or 1
+    islands = list(compiled_arm.model.island_indices)
+    return {"segments": segments, "islands": len(islands), "island_indices": islands}
+
+
 def cmd_real(args) -> None:
     """The checkpoint arm. One sync per step, no per-scope evaluation."""
+    if getattr(args, "reference_only", False):
+        # Before the checkpoint is loaded, so the adapter's first lookup and
+        # every build-time plan in the compiled path find this registry.
+        from titan.adapters.mlx import kernels as adapter_kernels
+        from titan.kernels.registry import reference_only
+
+        reference_only()
+        adapter_kernels.reset()
+
     from titan.adapters.mlx import loader
 
     gen2 = getattr(args, "gen2", False)
     model, _plan = loader.load_model(Path(args.model).expanduser())
+    lossless_contexts = args.lossless_contexts or args.contexts[:1]
     for context in args.contexts:
         eager, compiled_arm = make_arms(model, context, gen2=gen2)
         vocab = int(getattr(model, "language_model", model).args.vocab_size)
+
+        warm = None
+        if args.warm_widths:
+            before = int(mx.get_active_memory())
+            report = C.warm_traces(
+                compiled_arm.model,
+                widths=args.warm_widths,
+                capacities=[compiled_arm.state.capacity],
+                budget_seconds=600.0,
+                budget_mb=32768.0,
+                vocab=vocab,
+            )
+            warm = report.summary()
+            shape = _trace_shape(compiled_arm)
+            warm.update(shape)
+            warm["traces"] = shape["segments"] * report.warmed
+            warm["active_before_mb"] = before / 2**20
+            warm["rows"] = report.rows
+
         rows = []
         for width in args.widths:
             tokens = _tokens(width, vocab)
@@ -911,18 +975,72 @@ def cmd_real(args) -> None:
             )
             result["width"] = width
             rows.append(result)
+
+        lossless = None
+        if args.lossless and context in lossless_contexts:
+            # A fresh pair of arms, because the timed rows do not leave one.
+            # ``EagerArm.rewind`` trims the KV caches and nothing else, which is
+            # right for timing -- the shapes come back and the step is the step
+            # -- and wrong for a numerics comparison: the Gated DeltaNet's
+            # recurrent state is not trimmable, so after the timed rows the
+            # eager arm is dozens of tokens of recurrence ahead of its own KV.
+            # Re-prefilling is the only honest way to start both arms level.
+            eager, compiled_arm = make_arms(model, context, gen2=gen2)
+            eager_ids = _greedy_ids(eager, count=args.lossless, vocab=vocab)
+            compiled_ids = _greedy_ids(compiled_arm, count=args.lossless, vocab=vocab)
+            first_diff = next(
+                (
+                    i
+                    for i, (a, b) in enumerate(zip(eager_ids, compiled_ids))
+                    if a != b
+                ),
+                None,
+            )
+            lossless = {
+                "tokens": args.lossless,
+                "identical": eager_ids == compiled_ids,
+                "first_divergence": first_diff,
+                "eager_ids": eager_ids,
+                "compiled_ids": compiled_ids,
+            }
+
         payload = {
             "kind": "compiled_real",
             "generation": 2 if gen2 else 1,
             "model": str(args.model),
             "context": context,
             "repeats": args.repeats,
+            "reference_only": bool(getattr(args, "reference_only", False)),
             "islands": list(compiled_arm.model.island_indices),
             "fused_kernels": compiled_arm.model.fused_kernels,
+            "warm": warm,
+            "lossless": lossless,
+            "peak_memory_gb": mx.get_peak_memory() / 2**30,
+            "active_memory_gb": mx.get_active_memory() / 2**30,
             "rows": rows,
         }
         _report(payload)
+        if warm:
+            print(
+                f"  warm: {warm['traces']} traces "
+                f"({warm['segments']} segments x {warm['warmed']} widths), "
+                f"{warm['seconds']:.2f} s, "
+                f"+{warm['active_growth_mb']:.1f} MB active, "
+                f"{warm['islands']} islands"
+            )
+        if lossless:
+            print(
+                f"  lossless: {lossless['tokens']} greedy tokens, "
+                f"identical={lossless['identical']} "
+                f"first_divergence={lossless['first_divergence']}"
+            )
+        print(
+            f"  memory: active {payload['active_memory_gb']:.1f} GB, "
+            f"peak {payload['peak_memory_gb']:.1f} GB"
+        )
         suffix = "_gen2" if gen2 else ""
+        if getattr(args, "reference_only", False):
+            suffix += "_refonly"
         _write(payload, f"compiled_real{suffix}_{context}.json")
 
 
@@ -1050,6 +1168,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="generation 2: fused kernels inside the traces, eager islands "
         "for the PLE layer and for the sparse-attention layers past the "
         "indexer budget",
+    )
+    real.add_argument(
+        "--reference-only",
+        action="store_true",
+        help="INCIDENTS rule 2's control arm: every fast path off, on both "
+        "arms, so the compiled step and the eager step resolve the same ops "
+        "through the same registry door",
+    )
+    real.add_argument(
+        "--warm-widths",
+        type=_int_list,
+        default=[],
+        help="warm the trace grid at these verify widths before measuring, "
+        "and report what the grid cost",
+    )
+    real.add_argument(
+        "--lossless",
+        type=int,
+        default=0,
+        help="after the timed rows, take this many greedy tokens on each arm "
+        "and compare the argmax sequences",
+    )
+    real.add_argument(
+        "--lossless-contexts",
+        type=_int_list,
+        default=[],
+        help="contexts the greedy comparison runs at; default is the first",
     )
     real.set_defaults(func=cmd_real)
 

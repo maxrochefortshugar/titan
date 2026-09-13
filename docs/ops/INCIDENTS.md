@@ -12,10 +12,20 @@ The 32 GB packed n-gram table was mapped resident and read by the lookup kernel 
 
 What is different from the ordinary path: forced evaluation of every intermediate (including the sparse-attention gather and the expert gather at width 4) as separate command buffers, per-scope device syncs, and repeated state rewinds. The fast kernels were on (default); the same kernels ran fine under the server.
 
+## 2026-09-13 06:26, Titan, generation-2 compiled decode on the checkpoint
+
+`bench/decode/compiled_path.py real --gen2` (per-shape compiled graphs with the fused Metal kernels inside, 600-token context, widths 1 and 4) about two minutes after the reference-only arm of the same command had completed and passed the lossless check. One model process, memory guard and loader headroom wait in place, no server. Same panic string and thread table as the two before.
+
+### The common enabler
+
+All three panics happened with a 70 GB model resident plus a large additional GPU working set (a 32 GB resident table; per-scope forced intermediates at 64k; compiled traces and per-width Metal specialisation). On 2026-09-11 the hardening script raised `iogpu.wired_limit_mb` from the default (about 96 GB on a 128 GB machine, 75%) to 118 GB and installed a LaunchDaemon that reapplies it at boot. That lets the GPU wire nearly all of physical memory, and a GPU-side stall while the kernel cannot page is what a watchdogd timeout with idle CPUs looks like. The 110 GB MLX hard limit sat above the default cap, so it never protected anything.
+
+Fix: restore the default wired limit (`sudo sysctl iogpu.wired_limit_mb=0`, delete `/Library/LaunchDaemons/io.bitwrite.iogpu-wired-limit.plist`), and hold Titan's process ceiling below the default cap: `scheduler.memory_guard_gb = 90` (the MLX hard limit follows it). Until the wired limit is restored, no run with a GPU working set beyond the plain served path.
+
 ## Rules
 
 1. Real-model measurements go through `titan serve` and its profiler and `/metrics`, or through `bench/decode/run_round2.sh`. No instrumented in-process harness that forces per-scope evaluation or per-scope `mx.synchronize()` on the real checkpoint. Layer-level attribution is measured on the synthetic configuration, or on the real model with at most one sync per step.
 2. First real-model run of any new kernel path happens with `kernels.reference_only = true` as the control, then with only that kernel enabled, at short context before 64k.
 3. Every custom Metal kernel has a bounds test at the largest real shape it can see (64k context, verify width 8, top-k 10, 512 experts) on synthetic data before it is enabled by default.
-4. One model process at a time, 110 GB hard limit, the per-port lock and headroom wait in `titan serve` (see `titan/observability/memory_guard.py`), and the memory watch in the operator session. These were all in place and did not fire: this panic was not a memory event.
+4. One model process at a time, 90 GB hard limit (below the default GPU wired cap of about 96 GB; never raise the wired cap again), the per-port lock and headroom wait in `titan serve` (see `titan/observability/memory_guard.py`), and the memory watch in the operator session. These were all in place and did not fire: this panic was not a memory event.
 5. Anything that must survive a crash is written under the repo or `~/inference-server`, never under /tmp.
