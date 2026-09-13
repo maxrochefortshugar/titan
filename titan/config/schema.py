@@ -283,7 +283,12 @@ class SpeculationConfig:
     """Largest MTP chain the drafter may propose. Depth 4 measured 6% worse
     under a fixed policy."""
     mtp_depth_min: int = 1
-    adaptive_depth: bool = True
+    adaptive_depth: bool = False
+    """Round 5 (2026-09-13) measured fixed depth 3 at 90.7 tok/s short and 66.2
+    at 64k with 2.9% and 2.6% spread over four repeats; the expected-value
+    policy tied at best with an 11% spread and the mean-accepted policy pinned
+    itself at depth 3 anyway. Fixed depth is the default until an adaptive
+    policy beats it on the same harness."""
     acceptance_window: int = 64
     depth_policy: str = "expected_value"
     """Which adaptive policy runs when ``adaptive_depth`` is on.

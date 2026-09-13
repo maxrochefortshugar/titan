@@ -309,7 +309,11 @@ def test_the_default_adaptive_policy_is_the_expected_value_one():
 
 def test_the_old_policy_is_selectable_by_name():
     config = TitanConfig.from_toml(
-        MINIMAL, overrides=["speculation.depth_policy=mean_accepted"]
+        MINIMAL,
+        overrides=[
+            "speculation.adaptive_depth=true",
+            "speculation.depth_policy=mean_accepted",
+        ],
     )
     assert type(wiring.build_verifier(config)).__name__ == "DepthController"
 

@@ -133,25 +133,96 @@ is the check that the steer is a real steer, so that the agreement afterwards
 is convergence rather than a test that could not fail. The 16% of the tail that
 is not the mode is the probe duty and nothing else.
 
-### 1d. The real-model spread: not measured, and why
+### 1d. The real-model spread, measured
 
-The four repeats short and 64k did not run. The loader's headroom gate refuses
-the load:
+Twelve server lifetimes, three arms by four repeats, short and 64k in every
+one, rotated so no arm sits at the same position in the pass twice. The bar
+this round set itself: a spread under the machine's own drift, about 5%, and a
+median not below pinned depth 3.
 
-    refusing to load: 107.0 GB needed, 105.8 GB available after 180s
-    (total 128 GB).
+`adaptive` is the converging policy this round ships. `fixed3` is
+`adaptive_depth = false` at depth 3. `legacy` is ROUND4's
+`round(mean_accepted) + 1`, reachable again through
+`speculation.depth_policy = "mean_accepted"`, because "the new policy is
+steadier" is a claim about two policies and measuring one of them from a
+previous round's notes measures the machine's drift as well.
 
-`_checkpoint_size_gb` sums the 21 safetensors shards at 99.0 GB and asks for
-8 GB on top. The resident image is 73 GB, so the gate carries a large margin,
-but it is the gate the 2026-09-12 panic produced and it is not this round's to
-renegotiate. What changed since ROUND4 is the machine, not the rule: Docker
-Desktop and a Virtualization.framework VM are resident and available memory
-sat at 105.8 GB for the whole session, 1.2 GB under the bar, without drifting.
+**short**
 
-`bench/decode/round5/arm.sh` now waits for 107 GB rather than 85 before it
-launches a server, so an arm that cannot load waits instead of burning the
-loader's own 180-second wait and then failing. The step 1, 2 and 3 scripts are
-written and runnable; they need the 1.2 GB.
+| arm | n | tok/s each | median | spread | mean rows |
+|---|---:|---|---:|---:|---|
+| `adaptive` | 4 | 90.5, 86.8, 88.6, 86.1 | 87.7 | 5.0% | 2.92, 2.70, 3.16, 2.84 |
+| `fixed3` | 4 | 90.1, 91.5, 91.2, 88.9 | 90.7 | 2.9% | 3.97 throughout |
+| `legacy` | 4 | 93.1, 91.8, 89.5, 89.0 | 90.7 | 4.5% | 3.95 throughout |
+
+**64k**
+
+| arm | n | tok/s each | median | spread | mean rows |
+|---|---:|---|---:|---:|---|
+| `adaptive` | 4 | 60.8, 66.6, 68.2, 66.1 | 66.3 | 11.2% | 2.87, 2.95, 3.77, 2.86 |
+| `fixed3` | 4 | 65.9, 66.3, 67.6, 66.2 | 66.2 | 2.6% | 3.97 throughout |
+| `legacy` | 4 | 68.3, 67.3, 65.7, 66.7 | 67.0 | 3.9% | 3.97 throughout |
+
+The policy misses both halves of the bar. Its 64k spread is 11.2% against the
+two pinned arms' 2.6 and 3.9, and its short median is 3.3% under pinned depth
+3. What it did fix is real and is visible in the same table: ROUND4's 18% on
+the control arm is gone, and the two pinned arms now repeat themselves to
+within the drift, which is the evidence that the 18% was the loop and not the
+machine. The policy stopped oscillating. It settled in the wrong place.
+
+Where it settles is the mean-rows column. Both pinned arms sit at 3.97 rows,
+which is depth 3 every cycle. The adaptive arm sits at 2.86 to 2.95 in three
+repeats and at 3.77 in one, and the one that reached depth 3 is also the
+fastest 64k number in the whole table at 68.2. The arm is not noisy; it is
+bimodal, and the two modes are depth 2 and depth 3.
+
+### 1e. Why depth 2, and the one thing worth changing
+
+The arithmetic is in the arms themselves. At 64k the pinned arm runs a
+41.74 ms cycle at width 4 and commits 2.752 tokens; the adaptive arm runs a
+37.10 ms cycle at width 3 and commits 2.256. That is 0.0659 committed tokens
+per millisecond at depth 3 against 0.0628 at depth 2, so depth 3 is worth
+about 5% more. The policy's hysteresis is 6%. A candidate that is 5% better
+can never clear a 6% bar, so whichever depth the policy is in first is the
+depth it stays in, and the seed cost table decides that: under the seed and
+the 0.7 prior, depth 2 prices at 0.0928 against depth 3's 0.0918, so the very
+first decision on a fresh process is depth 2 and nothing afterwards can undo
+it.
+
+The same reading explains the short arm. There the depths are within a per
+cent of each other -- 0.08998 at depth 2 against 0.08985 at depth 3 -- so a 6%
+bar freezes the policy wherever it lands, and on the short workload that is
+sometimes depth 1, which costs 5%.
+
+`bench/decode/round5/depth_tune.py` prices the settings against this, on a
+deterministic fake whose acceptance curve and cost line are taken from the
+pinned arms above, driven through the real controller. Two things about how it
+is read. It is priced at the horizons the arms actually have, 912 cycles short
+and 133 at 64k, because a policy's asymptote is not what a request sees: the
+64k arm is 300 tokens and the convergence test in 1c runs to 400 cycles. And
+the column that matters for a default is the fresh-start one, because every
+arm here is a fresh process; the worst-of-three column is what the policy is
+worth if it ever arrives at a resting point it did not choose, which is the
+ROUND4 failure and the reason the probe stays.
+
+| setting | duty | fresh, short | fresh, 64k | worst of three, short | worst of three, 64k |
+|---|---:|---:|---:|---:|---:|
+| shipped, h=0.06, probe 48/8 | 17% | 94.4% | 90.2% | 94.4% | 78.0% |
+| h=0.03, probe 48/8 | 17% | 99.0% | 90.2% | 97.6% | 78.0% |
+| h=0.02, probe 48/8 | 17% | 98.8% | 89.2% | 97.7% | 78.0% |
+| h=0.02, probe 32/6 | 19% | 98.9% | 88.2% | 98.1% | 82.8% |
+| h=0.02, probe 96/8 | 8% | 99.1% | 88.7% | 96.6% | 64.8% |
+| h=0.02, no probe | 0% | 99.3% | 89.9% | 76.4% | 52.2% |
+| h=0.06, no probe | 0% | 95.0% | 89.9% | 76.4% | 52.2% |
+
+Percentages are of what a pinned depth is worth on that workload. Two things
+fall out and only one of them is the round's question. The probe duty is not
+what costs the fresh-start numbers: at 64k, no probe at all realises 89.9%
+from fresh and the shipped 17% duty realises 90.2%, so the duty pays for
+itself even before the robustness column, where dropping it is the difference
+between 78% and 52%. The probe stays. What costs the fresh-start numbers is
+the hysteresis, and 3% is the whole change: inside both workloads' true
+margins, still outside the per-cent noise the bar exists to damp.
 
 ---
 

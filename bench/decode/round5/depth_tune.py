@@ -124,7 +124,7 @@ def steer(policy, high: bool) -> None:
             )
 
 
-def run(workload: Workload, cycles: int = 900, **kwargs) -> dict:
+def run(workload: Workload, cycles: int = 900, tail: int = 300, **kwargs) -> dict:
     out = {}
     realised = []
     for start in ("fresh", "low", "high"):
@@ -135,16 +135,23 @@ def run(workload: Workload, cycles: int = 900, **kwargs) -> dict:
         if start != "fresh":
             steer(policy, high=(start == "high"))
         depths, rate = machine.drive(policy, cycles)
-        tail = depths[-300:]
+        window = depths[-tail:]
         out[start] = {
-            "mode": max(set(tail), key=tail.count),
-            "mean": statistics.mean(tail),
+            "mode": max(set(window), key=window.count),
+            "mean": statistics.mean(window),
             "rate": rate,
         }
         realised.append(rate)
+    out["modes"] = "/".join(str(out[k]["mode"]) for k in ("fresh", "low", "high"))
     best = max(workload.truth(d) for d in range(0, 4))
+    # Two numbers, because they answer different questions. Every arm on this
+    # machine starts a fresh process, so ``fresh`` is what step 1 measured;
+    # ``worst_of_three`` is what the policy is worth if it ever arrives at a
+    # resting point it did not choose, which is the failure ROUND4 recorded.
+    out["fresh"] = out["fresh"]["rate"] if isinstance(out["fresh"], dict) else 0.0
     out["worst_of_three"] = min(realised)
     out["fraction_of_best"] = min(realised) / best
+    out["fresh_of_best"] = out["fresh"] / best
     out["spread"] = (max(realised) - min(realised)) / statistics.median(realised)
     return out
 
@@ -159,29 +166,44 @@ def main() -> int:
             value = workload.truth(depth)
             print(f"| {depth} | {value:.5f} | {value / best * 100:.1f}% |")
 
+    # The horizons are the ones the arms actually have. A policy's asymptote is
+    # not what a request sees: step 1's 64k arm is 300 tokens, which is 133
+    # cycles from a fresh process, and its short arm is 912 across four
+    # prompts. A setting that converges beautifully by cycle 800 and is still
+    # at the seed's choice at cycle 133 is the wrong setting for this server.
+    horizons = {"short": (912, 300), "64k": (133, 60)}
+
     grid = [
-        ("shipped", dict(hysteresis=0.06, probe_every=48, probe_cycles=8)),
-        ("h=0.02", dict(hysteresis=0.02, probe_every=48, probe_cycles=8)),
-        ("h=0.00", dict(hysteresis=0.0, probe_every=48, probe_cycles=8)),
-        ("h=0.02 probe 96/8", dict(hysteresis=0.02, probe_every=96, probe_cycles=8)),
-        ("h=0.02 probe 96/6", dict(hysteresis=0.02, probe_every=96, probe_cycles=6)),
-        ("h=0.02 probe 128/8", dict(hysteresis=0.02, probe_every=128, probe_cycles=8)),
+        ("shipped h=0.06 48/8 d=8", dict(hysteresis=0.06, probe_every=48, probe_cycles=8)),
+        ("h=0.03 48/8 d=8", dict(hysteresis=0.03, probe_every=48, probe_cycles=8)),
+        ("h=0.02 48/8 d=8", dict(hysteresis=0.02, probe_every=48, probe_cycles=8)),
+        ("h=0.02 48/8 d=16", dict(hysteresis=0.02, probe_every=48, probe_cycles=8, dwell=16)),
+        ("h=0.02 48/8 d=32", dict(hysteresis=0.02, probe_every=48, probe_cycles=8, dwell=32)),
+        ("h=0.02 48/6 d=16", dict(hysteresis=0.02, probe_every=48, probe_cycles=6, dwell=16)),
+        ("h=0.02 32/6 d=16", dict(hysteresis=0.02, probe_every=32, probe_cycles=6, dwell=16)),
+        ("h=0.02 64/8 d=16", dict(hysteresis=0.02, probe_every=64, probe_cycles=8, dwell=16)),
+        ("h=0.00 48/8 d=16", dict(hysteresis=0.0, probe_every=48, probe_cycles=8, dwell=16)),
+        ("h=0.02 96/8 d=16", dict(hysteresis=0.02, probe_every=96, probe_cycles=8, dwell=16)),
+        ("h=0.02 96/6 d=8", dict(hysteresis=0.02, probe_every=96, probe_cycles=6)),
+        ("h=0.02 128/8 d=8", dict(hysteresis=0.02, probe_every=128, probe_cycles=8)),
         ("h=0.02 no probe", dict(hysteresis=0.02, probe_every=0, probe_cycles=0)),
         ("h=0.06 no probe", dict(hysteresis=0.06, probe_every=0, probe_cycles=0)),
     ]
     for workload in (SHORT, LONG):
-        print(f"\n## {workload.name}: the policy against that ceiling\n")
-        print("| setting | duty | mode from fresh/low/high | worst realised | "
-              "of the best | spread |")
+        cycles, tail = horizons[workload.name]
+        print(f"\n## {workload.name}: the policy against that ceiling, "
+              f"{cycles} cycles\n")
+        print("| setting | duty | mode fresh/low/high | fresh, of the best | "
+              "worst of three, of the best | spread |")
         print("|---|---:|---|---:|---:|---:|")
         for label, kwargs in grid:
-            r = run(workload, **kwargs)
+            r = run(workload, cycles=cycles, tail=tail, **kwargs)
             duty = (kwargs["probe_cycles"] / kwargs["probe_every"]
                     if kwargs["probe_every"] else 0.0)
-            modes = "/".join(str(r[s]["mode"]) for s in ("fresh", "low", "high"))
             print(
-                f"| {label} | {duty * 100:.0f}% | {modes} | "
-                f"{r['worst_of_three']:.5f} | {r['fraction_of_best'] * 100:.1f}% | "
+                f"| {label} | {duty * 100:.0f}% | {r['modes']} | "
+                f"{r['fresh_of_best'] * 100:.1f}% | "
+                f"{r['fraction_of_best'] * 100:.1f}% | "
                 f"{r['spread'] * 100:.1f}% |"
             )
     return 0
