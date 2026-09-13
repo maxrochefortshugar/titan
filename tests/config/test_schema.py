@@ -100,7 +100,7 @@ def test_server_defaults():
 def test_soft_guard_is_eighty_five_percent():
     sc = schema.SchedulerConfig()
     assert sc.memory_guard_soft_fraction == 0.85
-    assert sc.memory_guard_soft_gb == pytest.approx(110.0 * 0.85)
+    assert sc.memory_guard_soft_gb == pytest.approx(90.0 * 0.85)
 
 
 def test_hot_ram_tier_is_four_gigabytes():

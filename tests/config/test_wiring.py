@@ -174,7 +174,7 @@ def test_the_admission_config_carries_the_soft_guard():
     admission = wiring.build_admission_config(config)
     assert admission.max_sequences == 8
     assert admission.block_tokens == 512
-    assert admission.memory_guard_gb == pytest.approx(110.0 * 0.85)
+    assert admission.memory_guard_gb == pytest.approx(90.0 * 0.85)
 
 
 def test_the_decode_cycle_follows_the_speculation_switch():
