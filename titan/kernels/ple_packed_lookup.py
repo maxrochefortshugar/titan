@@ -292,6 +292,15 @@ def supports(k: ShapeClass) -> bool:
 
 OP = KernelOp(
     name="ple_packed_lookup",
+    default_off=True,
+    default_off_reason=(
+        "ROUND4: the only op that loses at both contexts, -4.0% short and "
+        "-3.5% at 64k, with the worst cold-prefill column of the thirteen "
+        "arms. The reader is bit-exact, so this is cost rather than "
+        "numerics: the table is streamed from SSD by rows either way and "
+        "the device-side dequantise is not buying back what the host-side "
+        "page reads cost."
+    ),
     aliases=("ngram_gather",),
     reference_fn=reference,
     fast_fn=metal,

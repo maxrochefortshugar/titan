@@ -11,7 +11,8 @@ Two properties follow, and both are deliberate. There is no monkeypatching: a
 call site that wants a kernel says so in its own body, in the open. And the
 adapter is correct without the registry -- every site keeps the stock MLX path,
 so this module returning ``None`` for everything is a supported configuration,
-which is what makes bisecting a numeric change a matter of one env var.
+which is what makes bisecting a numeric change a matter of one line in the
+``kernels`` section.
 
 ``ADAPTER_OPS`` maps the names the call sites use to the names
 ``titan.kernels`` registers. The adapter's names are dotted and describe the
@@ -22,9 +23,7 @@ means a kernel can be renamed, aliased or split without touching vendored code.
 from __future__ import annotations
 
 import logging
-import os
 import threading
-from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -56,12 +55,14 @@ ADAPTER_OPS: dict[str, str | None] = {
     "ple.packed_rows_prefetch": None,
 }
 
-_DISABLED = {
-    name.strip()
-    for name in os.environ.get("TITAN_DISABLE_OPS", "").split(",")
-    if name.strip()
-}
-_ALL_DISABLED = os.environ.get("TITAN_REFERENCE_ONLY", "") == "1"
+# There is no environment switch here. Turning an op off is
+# ``kernels.disabled`` in the config file and turning them all off is
+# ``kernels.reference_only``; both reach this module through the registry the
+# wiring publishes, which is the same path the server takes, so a control arm
+# measured here is the control arm the server would run. The two ``TITAN_*``
+# variables this module used to read were a second, quieter policy on top of
+# that one, and a bisect with two policies is a bisect that cannot say which
+# one produced a number.
 
 _lock = threading.Lock()
 _registry: Any = None
@@ -122,8 +123,6 @@ def get(name: str) -> Optional[Callable[..., Any]]:
     ``None`` is never an error. It means "no kernel for this site", and the
     site keeps its stock path.
     """
-    if _ALL_DISABLED or name in _DISABLED:
-        return None
     if name in _resolved:
         return _resolved[name]
     registry = _get_registry()
@@ -135,8 +134,6 @@ def get(name: str) -> Optional[Callable[..., Any]]:
         else:
             registry_name = ADAPTER_OPS[name]
         if registry_name is None:
-            op = None
-        elif registry_name in _DISABLED:
             op = None
         else:
             try:
@@ -276,107 +273,18 @@ def _open_pack(prefix: str, model_path):
 
 
 # ---------------------------------------------------------------------------
-# Arm routing
+# Arm routing lives in ``models/forward_paths.py``
 # ---------------------------------------------------------------------------
 #
-# Which *arm* of the vendored attention a call takes is not the same question
-# as which kernel is behind an op, and it needs its own switch: the arms differ
-# in cost by several milliseconds a step at 64k and by about one bf16 ULP in
-# the last bits, so a bench has to be able to pair them and a regression has to
-# be bisectable.
-#
-# ``models/forward_paths.py`` is the switchboard for the arms that were already
-# there. These three are new this round and live here instead, because
-# ``forward_paths`` belongs to another workstream's files and this module is
-# already the adapter's one door for "which accelerated path does this site
-# take". They should be folded into ``forward_paths`` by whoever owns it next.
-#
-# No environment variables, same as ``forward_paths``: a route is a name with a
-# default and a docstring line, and changing one is a function call.
-
-#: name -> default value.
-ROUTES: dict[str, Any] = {
-    "qsa_sparse_singleton_verify": True,
-    "qsa_batched_sparse": True,
-    "qsa_gather_min_context": 8192,
-    "qsa_gather_min_context_verify": 4096,
-}
-
-ROUTE_DESCRIPTIONS: dict[str, str] = {
-    "qsa_sparse_singleton_verify": (
-        "Route a one-row target-verify forward (the depth-0 speculative cycle, "
-        "and any decode that asks for a hidden state) through the gathered "
-        "sparse decode arm. Off leaves it on the dense masked path, which "
-        "reads the whole cache: 2.8 ms a forward at 64k against 1.4."
-    ),
-    "qsa_batched_sparse": (
-        "Give a BatchQSAKVCache the gathered sparse arm, through the "
-        "``qsa.gathered_batched`` registry op. Off leaves batched decode and "
-        "batched verify on the dense path, where every row reads the whole "
-        "cache and the QSA mask is discarded outright when rows are padded."
-    ),
-    "qsa_gather_min_context": (
-        "Context length from which a one-row forward prefers the gathered arm "
-        "to the dense masked one. The vendored gate is the QSA token budget, "
-        "2048, which is where selection becomes *legal* rather than where it "
-        "becomes cheaper: the gathered arm reads a flat 2,051 rows whatever "
-        "the context, so at 2048 it is reading more than the dense arm and "
-        "paying for selection on top. Clamped up to the budget by the caller."
-    ),
-    "qsa_gather_min_context_verify": (
-        "The same, for a block wider than one row. It is lower because the "
-        "dense arm's cost rises with the width and the gathered arm's barely "
-        "does: measured per QSA layer on the real-shapes synthetic, width 4 "
-        "crosses over near 4096 and width 1 not until 8192."
-    ),
-}
-
-_routes: dict[str, Any] = dict(ROUTES)
-
-
-def _check_route(name: str) -> str:
-    if name not in ROUTES:
-        raise KeyError(
-            f"no such route {name!r}; known: {', '.join(sorted(ROUTES))}"
-        )
-    return name
-
-
-def route(name: str) -> Any:
-    """The current value of a route. The hot-path read, so it stays a lookup."""
-    return _routes[_check_route(name)]
-
-
-def set_routes(**values: Any) -> dict[str, Any]:
-    """Set several routes at once. Returns the values they had before."""
-    with _lock:
-        previous = {}
-        for name, value in values.items():
-            previous[_check_route(name)] = _routes[name]
-            _routes[name] = value
-        return previous
-
-
-def routes() -> dict[str, Any]:
-    """What is set right now. For a bench header or a resolved-config dump."""
-    return dict(_routes)
-
-
-def reset_routes() -> None:
-    with _lock:
-        _routes.clear()
-        _routes.update(ROUTES)
-
-
-@contextmanager
-def overridden(**values: Any):
-    """Scope a set of routes to a block, restoring the old values after."""
-    previous = set_routes(**values)
-    try:
-        yield routes()
-    finally:
-        set_routes(**previous)
-
+# ROUND3 added four routes here -- ``qsa_sparse_singleton_verify``,
+# ``qsa_batched_sparse`` and the two gather crossovers -- because
+# ``forward_paths`` belonged to another workstream's files at the time, and
+# recorded that they should be folded in by whoever owned it next. ROUND4 did
+# that. They are arm switches for the vendored attention, the same kind of
+# thing as ``batched_verify_attention``, and there is no reason for the
+# attention switchboard to be in two files. Read them with
+# ``forward_paths.route(name)`` and pair them with
+# ``forward_paths.overridden(...)``, which now takes routes as well as paths.
 
 # ---------------------------------------------------------------------------
 # The gathered-QSA value objects

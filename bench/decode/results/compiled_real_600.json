@@ -1,0 +1,50 @@
+{
+  "kind": "compiled_real",
+  "model": "/Users/maxshugar/Engineering/MLX/_models/Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+  "context": 600,
+  "repeats": 20,
+  "rows": [
+    {
+      "eager": {
+        "arm": "eager",
+        "width": 1,
+        "ops": 0,
+        "top_primitives": [],
+        "build_ms": 14.030771250418184,
+        "step_ms": 16.29218750031214,
+        "gpu_ms": 2.261416249893955
+      },
+      "compiled": {
+        "arm": "compiled",
+        "width": 1,
+        "ops": 0,
+        "top_primitives": [],
+        "build_ms": 2.644645749569463,
+        "step_ms": 27.909677250136156,
+        "gpu_ms": 25.265031500566693
+      },
+      "width": 1
+    },
+    {
+      "eager": {
+        "arm": "eager",
+        "width": 4,
+        "ops": 0,
+        "top_primitives": [],
+        "build_ms": 23.054812499594846,
+        "step_ms": 26.742343750356667,
+        "gpu_ms": 3.687531250761822
+      },
+      "compiled": {
+        "arm": "compiled",
+        "width": 4,
+        "ops": 0,
+        "top_primitives": [],
+        "build_ms": 2.8818020005019207,
+        "step_ms": 33.27857275007773,
+        "gpu_ms": 30.396770749575808
+      },
+      "width": 4
+    }
+  ]
+}

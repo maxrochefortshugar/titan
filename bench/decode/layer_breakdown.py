@@ -522,13 +522,13 @@ def _paired(harness, arms, cells, *, repeats, warmup):
     matters more than the repeat count: measuring all of A then all of B hands
     the drift to whichever ran second.
     """
-    from titan.adapters.mlx import kernels as adapter_kernels
+    from titan.adapters.mlx.vendor.mlx_vlm.models import forward_paths
 
     names = list(cells)
     order = names + names[::-1]
     results: dict[tuple[str, int, bool], list[float]] = {}
     for name in order:
-        with adapter_kernels.overridden(**cells[name]):
+        with forward_paths.overridden(**cells[name]):
             for width, want_hidden in arms:
                 for _ in range(warmup):
                     _step(harness, width, want_hidden)

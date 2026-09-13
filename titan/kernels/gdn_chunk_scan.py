@@ -470,6 +470,15 @@ def supports(sc: ShapeClass) -> bool:
 
 OP = KernelOp(
     name="gdn_chunk_scan",
+    default_off=True,
+    default_off_reason=(
+        "ROUND4: the largest single item in the bisect, -13.2% on 64k "
+        "decode. It buys 2.4% of cold prefill and gives back five times "
+        "that. Fires only on prefill-shaped calls, so the whole cost "
+        "appears in the decode that follows a long prefill and none of it "
+        "at short context; the mechanism is not established and is ROUND4 "
+        "section 5's second lever."
+    ),
     aliases=("gdn_scan_chunked",),
     reference_fn=reference,
     fast_fn=metal,

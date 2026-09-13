@@ -486,13 +486,20 @@ The bottom-right cell is the one to remember before touching any of this: the
 gathered verify arm is worth about 48 ms a forward on the checkpoint at 64k. It
 is the largest single item in the long-context forward and it was already on.
 
-### Where the routes live, and why not in `forward_paths`
+### Where the routes live
 
-`titan/adapters/mlx/kernels.py` carries them, next to the registry lookups, on
-the same contract as this document's section 7: a name, a default, a docstring
-line, no environment variables, and `overridden` to scope a change to a block.
-They belong in `models/forward_paths.py` with the rest and should be moved
-there; ROUND3 did not own that file.
+`models/forward_paths.py`, with the rest of the arm switchboard, on this
+document's section 7 contract: a name, a default, a docstring line, no
+environment variables, and `overridden` to scope a change to a block. ROUND3
+put them in `titan/adapters/mlx/kernels.py` instead, because it did not own the
+vendored file, and recorded that they belonged in `forward_paths`; ROUND4 moved
+them.
+
+The file now holds two kinds of switch. A *path* is a boolean -- an arm is on or
+it is off -- and is read with `enabled`. A *route* carries a value, because the
+question it answers is "from which context length" rather than "yes or no", and
+is read with `route`. `set_paths` and `overridden` take either, so a bench
+pairing arms does not have to know which kind each one is.
 
 ### What is still context-dependent, after all of it
 

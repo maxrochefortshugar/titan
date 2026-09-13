@@ -153,6 +153,32 @@ def rewind(cache, width: int) -> None:
             entry.trim(width)
 
 
+@pytest.fixture
+def compiled_hc(quantized):
+    """The synthetic model with its hyper-connections compiled, then not.
+
+    ``build_synthetic`` does not call ``compile_hyper_connections``; the real
+    loader does, in ``Model.load_weights``. So on the synthetic model
+    ``_compiled_forward`` is absent, the compiled arm is refused whatever the
+    path says, and a parity test that pairs the path on against the path off
+    runs ``_forward`` on both sides and asserts nothing. This fixture is what
+    makes those tests compare two different things. It is a fixture rather
+    than a change to ``build_synthetic`` because the model fixture is
+    module-scoped and the op-count tests in this file are calibrated without
+    it.
+    """
+    from titan.adapters.mlx.vendor.mlx_vlm.models.qwen4_exp import language as q4
+
+    modules = list(q4._unique_hyper_connections(quantized))
+    q4.compile_hyper_connections(quantized, mtp_enabled=True)
+    try:
+        yield quantized
+    finally:
+        for module in modules:
+            if hasattr(module, "_compiled_forward"):
+                del module._compiled_forward
+
+
 def paired_logits(model, width: int, paths: dict, rows: int = 1):
     """The same step run twice from the same history, once per setting."""
     results = {}
@@ -240,11 +266,52 @@ def test_batched_verify_attention_holds_its_ulp_bound(quantized, width):
     assert np.mean(distance > 1) <= 0.05
 
 
-def test_compiled_gated_residual_holds_its_ulp_bound(quantized):
-    on, off = paired_logits(quantized, 1, {"compiled_gated_residual"})
+def test_compiled_gated_residual_holds_its_ulp_bound(compiled_hc):
+    on, off = paired_logits(compiled_hc, 1, {"compiled_gated_residual"})
     distance = ulp_distance(on, off)
     assert np.all(mx.array(mx.argmax(on, -1) == mx.argmax(off, -1)).tolist())
     assert distance.mean() <= 1.0
+
+
+@pytest.mark.parametrize("width", [4, 6])
+def test_compiled_gated_residual_holds_its_bound_at_verify_width(compiled_hc, width):
+    """ROUND4 took the width, dtype and MTP gates off the compiled arm.
+
+    Before that the arm was refused for anything but a bfloat16 single token
+    with MTP off, so a verify block never reached it. The gates were there
+    because the closure was traced once and a second shape would retrace, which
+    is what a compile cache is for; what has to hold once they are off is the
+    same bound the width-1 case holds. See COMPILED.md section 5.1.
+    """
+    on, off = paired_logits(compiled_hc, width, {"compiled_gated_residual"})
+    distance = ulp_distance(on, off)
+    assert np.all(mx.array(mx.argmax(on, -1) == mx.argmax(off, -1)).tolist())
+    assert distance.mean() <= 1.0
+
+
+def test_the_compiled_residual_is_reached_at_a_verify_width(compiled_hc):
+    """The gates are off, so a wide block actually takes the compiled closure.
+
+    The bound test above passes trivially if the arm is refused, because then
+    both sides run the same code. This one counts.
+    """
+    module = compiled_hc.language_model.model.layers[0].attn_hyper_connection
+    assert getattr(module, "_compiled_forward", None) is not None
+    calls = {"n": 0}
+    real = module._compiled_forward
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    module._compiled_forward = counting
+    try:
+        cache = primed(compiled_hc)
+        with forward_paths.overridden(compiled_gated_residual=True):
+            step(compiled_hc, cache, 4)
+    finally:
+        module._compiled_forward = real
+    assert calls["n"] >= 1, "a width-4 block never reached the compiled residual"
 
 
 # ---------------------------------------------------------------------------

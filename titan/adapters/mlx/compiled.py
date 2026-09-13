@@ -120,6 +120,7 @@ __all__ = [
     "build_model",
     "build_moe_step",
     "capacity_for",
+    "EAGER",
     "conv_decode_weight",
     "causal_conv1d_decode",
     "eval_weights",
@@ -895,6 +896,10 @@ def build_attention_step(module: nn.Module, *, compiled: bool = True):
 
 LINEAR = "linear"
 ATTENTION = "attention"
+#: A layer that cannot be traced and runs eagerly against a vendored cache,
+#: with a placeholder in the :class:`DecodeState` so the indices still line up.
+#: One layer of 48 on the checkpoint is one; see :func:`build_model`.
+EAGER = "eager"
 
 
 @dataclass
@@ -1095,6 +1100,9 @@ def new_state(
     inner = _language_model(model).model
     layers: list[LayerState] = []
     for layer in inner.layers:
+        if "ple" in layer:
+            layers.append(LayerState(kind=EAGER, arrays=()))
+            continue
         if layer.is_linear:
             gdn = layer.linear_attn
             layers.append(
@@ -1201,6 +1209,13 @@ def truncate_state(
         return state
     layers: list[LayerState] = []
     for index, entry in enumerate(state.layers):
+        if entry.kind == EAGER:
+            # The layer that stays eager holds its own vendored cache and is
+            # truncated by the vendored path, the same way it always was. The
+            # placeholder carries no arrays, so there is nothing to rewind
+            # here and nothing to demand a snapshot for.
+            layers.append(entry)
+            continue
         if entry.kind == ATTENTION:
             k_buf, v_buf, index_buf, _offset = entry.arrays
             layers.append(
@@ -1247,7 +1262,11 @@ def rollback_speculative_state(
 
 
 def read_layer_state(
-    caches: Sequence[Any], *, capacity: Optional[int] = None, step: int = 256
+    caches: Sequence[Any],
+    *,
+    capacity: Optional[int] = None,
+    step: int = 256,
+    eager_indices: Sequence[int] = (),
 ) -> DecodeState:
     """Build a :class:`DecodeState` from the vendored caches.
 
@@ -1255,7 +1274,14 @@ def read_layer_state(
     stand; a ``KVCache``'s keys and values are copied into a fixed-capacity
     buffer and its integer offset becomes a rank-zero array. Called once when a
     sequence moves from the eager prefill onto the compiled decode.
+
+    ``eager_indices`` names the layers that stay on the eager path, which is
+    :func:`untraceable_layers` for a model with a PLE layer in it. Those get an
+    :data:`EAGER` placeholder here and keep their vendored cache, because their
+    state is state a trace cannot hold -- the PLE layer's short-conv window
+    lives in slot 2 of the same cache, which this function does not carry.
     """
+    skip = set(eager_indices)
     from .vendor.mlx_vlm.models.qwen4_exp.cache import ArraysCache
 
     length = 0
@@ -1265,7 +1291,10 @@ def read_layer_state(
     target = capacity_for(length, step) if capacity is None else capacity
 
     layers: list[LayerState] = []
-    for cache in caches:
+    for index, cache in enumerate(caches):
+        if index in skip:
+            layers.append(LayerState(kind=EAGER, arrays=()))
+            continue
         if isinstance(cache, ArraysCache):
             slots = list(cache.state or ())
             layers.append(LayerState(kind=LINEAR, arrays=tuple(slots[:2])))
@@ -1306,6 +1335,8 @@ def write_layer_state(state: DecodeState, caches: Sequence[Any]) -> None:
     from .vendor.mlx_vlm.models.qwen4_exp.cache import ArraysCache
 
     for cache, entry in zip(caches, state.layers):
+        if entry.kind == EAGER:
+            continue
         if entry.kind == LINEAR:
             if not isinstance(cache, ArraysCache):
                 raise ValueError("linear layer state written to a non-recurrent cache")
@@ -1355,40 +1386,168 @@ class CompiledModel:
     layers: list[CompiledLayer]
     hc_count: int
     model: Any = None
+    #: The QSA indexer budget of the sparse layers, or 0 when the model has
+    #: none. Past it the eager forward selects key blocks and a single graph
+    #: does not: see :meth:`_refuse_above_the_budget`.
+    sparse_budget: int = 0
+    #: ``[(kind, payload)]`` in layer order when the model has a layer that
+    #: cannot be traced; empty when the whole model is one graph. ``kind`` is
+    #: ``"traced"`` with ``(start, stop, step)`` or ``"eager"`` with the layer
+    #: index. See :func:`build_model`.
+    plan: list[tuple[str, Any]] = field(default_factory=list)
+    #: Vendored caches for the eager layers, by layer index. Those layers own
+    #: their own state, because it is state a trace cannot hold.
+    eager_caches: dict[int, Any] = field(default_factory=dict)
+    tail: Optional[Callable[..., Any]] = None
 
     def embed(self, tokens: mx.array) -> mx.array:
         inner = _language_model(self.model).model
         return mx.tile(inner.embed_tokens(tokens), (1, 1, self.hc_count))
 
+    def _refuse_above_the_budget(self, length: int) -> None:
+        """Refuse a length where a single graph would be a different answer.
+
+        COMPILED.md section 2: below the indexer budget the eager attention is
+        dense and the compiled step reproduces it exactly. Above it the eager
+        path *selects* key blocks, using this layer's mixed hyper-connection
+        output, which is computed inside the layer graph -- so a sparse layer
+        cannot be one graph, and :func:`build_layer_split` is the cut.
+
+        A caller that forgets gets a plausible answer that is wrong, which
+        section 7 calls the worst failure mode in that document and says the
+        builder should refuse rather than trust the caller. This is that
+        refusal. It is at call time rather than at build time because the
+        budget is a property of the length, and the length is not known until
+        a step runs.
+        """
+        if self.sparse_budget and length > self.sparse_budget:
+            raise ValueError(
+                f"context {length} is past the QSA indexer budget "
+                f"{self.sparse_budget}, where the eager attention selects key "
+                "blocks and a single traced layer does not. Use "
+                "build_layer_split and pass the selection in; a single graph "
+                "here attends to keys the eager path drops and returns a "
+                "plausible wrong answer. See COMPILED.md sections 2 and 7."
+            )
+
     def __call__(self, tokens: mx.array, state: DecodeState):
         """Embed, run the compiled step, and return ``(logits, hidden, state)``."""
         hidden = self.embed(tokens)
         width = tokens.shape[1]
+        self._refuse_above_the_budget(state.length + width)
         state = grow_state(state, state.length + width)
-        logits, mixed, arrays = self.step(hidden, state.arrays(), self.weights)
-        return logits, mixed, state.replaced(arrays, state.length + width)
+        if not self.plan:
+            logits, mixed, arrays = self.step(hidden, state.arrays(), self.weights)
+            return logits, mixed, state.replaced(arrays, state.length + width)
+        return self._segmented(tokens, hidden, state, width)
+
+    def _segmented(self, tokens, hidden, state, width):
+        """The mixed path: traced runs with an untraceable layer between them.
+
+        The layer that cannot be traced runs eagerly, on its own vendored
+        cache, exactly as it would in the ordinary forward. Everything either
+        side of it is still one graph per run, so what the split costs is one
+        extra dispatch per untraceable layer rather than the whole saving.
+        """
+        inner = _language_model(self.model).model
+        arrays = state.arrays()
+        out: list[tuple[mx.array, ...]] = [() for _ in state.layers]
+        for kind, payload in self.plan:
+            if kind == "eager":
+                index = payload
+                layer = inner.layers[index]
+                cache = self.eager_caches.get(index)
+                # The same mask ``Qwen4ExpModel.__call__`` builds for this
+                # layer's type. At width 1 both helpers return ``None``; at a
+                # verify width the block's own causality is in here, so
+                # passing ``None`` would be quietly wrong rather than slow.
+                from .vendor.mlx_vlm.models.qwen4_exp.language import (
+                    _create_qwen3_5_attention_mask,
+                    _create_qwen3_5_ssm_mask,
+                )
+
+                build_mask = (
+                    _create_qwen3_5_ssm_mask
+                    if layer.is_linear
+                    else _create_qwen3_5_attention_mask
+                )
+                hidden = layer(hidden, tokens, build_mask(hidden, cache), cache, None)
+                continue
+            start, stop, step = payload
+            hidden, produced = step(
+                hidden,
+                arrays[start:stop],
+                self.weights["layers"][start:stop],
+            )
+            out[start:stop] = list(produced)
+        logits, mixed = self.tail(hidden, self.weights)
+        return logits, mixed, state.replaced(out, state.length + width)
+
+
+def untraceable_layers(model: nn.Module) -> list[int]:
+    """Indices of the layers :func:`build_layer` cannot take.
+
+    Today that is exactly the PLE layers: ``Qwen4ExpNGramEmbedding`` reads rows
+    out of a 32 GB packed table on SSD through an mmap and numpy, in the middle
+    of the forward, and no trace can hold a side effect. One layer of 48 on the
+    checkpoint has one; the synthetic model has none, which is why the whole
+    compiled model was a single graph until ROUND4 pointed it at the
+    checkpoint and found that section 6's command had never been runnable.
+    """
+    inner = _language_model(model).model
+    return [index for index, layer in enumerate(inner.layers) if "ple" in layer]
 
 
 def build_model(
     model: nn.Module, *, compiled: bool = True, use_kernel: bool = True
 ) -> CompiledModel:
-    """Chain every layer, the final mixer and the head into one graph."""
+    """Chain every layer, the final mixer and the head into one graph.
+
+    A model with an untraceable layer in it cannot be one graph, so it becomes
+    a *plan*: traced runs of layers with the untraceable ones eager between
+    them. The checkpoint has one such layer, so it is two traced runs and one
+    eager layer rather than one graph, and what the split costs is one extra
+    dispatch rather than the saving. A model with none -- every synthetic model
+    here -- takes exactly the single-graph path it always did.
+    """
     language = _language_model(model)
     inner = language.model
+    eager_ids = untraceable_layers(model)
     layers = [
-        build_layer(layer, compiled=False, use_kernel=use_kernel)
-        for layer in inner.layers
+        None
+        if index in eager_ids
+        else build_layer(layer, compiled=False, use_kernel=use_kernel)
+        for index, layer in enumerate(inner.layers)
     ]
     mixer = build_gated_residual(inner.hyper_connection_mixer, compiled=False)
     head_spec, head_arrays = split_linear(language.lm_head)
-    kinds = [layer.kind for layer in layers]
-    steps = [layer.step for layer in layers]
+    kinds = [None if layer is None else layer.kind for layer in layers]
+    steps = [None if layer is None else layer.step for layer in layers]
 
     weights = {
-        "layers": [layer.weights for layer in layers],
+        "layers": [{} if layer is None else layer.weights for layer in layers],
         "mixer": gated_residual_weights(inner.hyper_connection_mixer)[1],
         "head": head_arrays,
     }
+
+    def run(index, hidden, state_tuple, layer_weights, sparse_mask=None):
+        """One traced layer, dispatched on its kind. Shared by both paths."""
+        if kinds[index] == LINEAR:
+            conv_state, ssm_state = state_tuple
+            hidden, conv_state, ssm_state = steps[index](
+                hidden, conv_state, ssm_state, layer_weights
+            )
+            return hidden, (conv_state, ssm_state)
+        k_buf, v_buf, index_buf, offset = state_tuple
+        hidden, k_buf, v_buf, index_buf, offset = steps[index](
+            hidden, k_buf, v_buf, index_buf, offset, layer_weights, sparse_mask
+        )
+        return hidden, (k_buf, v_buf, index_buf, offset)
+
+    if eager_ids:
+        return _planned_model(
+            model, inner, layers, weights, mixer, head_spec, run, eager_ids, compiled
+        )
 
     def step(hidden, states, weights, sparse_masks=None):
         out_states = []
@@ -1417,6 +1576,67 @@ def build_model(
         layers=layers,
         hc_count=int(inner.args.hc_count),
         model=model,
+        sparse_budget=_sparse_budget(inner),
+    )
+
+
+def _sparse_budget(inner) -> int:
+    """The QSA indexer budget shared by this model's sparse layers, or 0."""
+    for layer in inner.layers:
+        indexer = getattr(getattr(layer, "self_attn", None), "indexer", None)
+        if indexer is not None:
+            return int(indexer.token_budget)
+    return 0
+
+
+def _planned_model(
+    model, inner, layers, weights, mixer, head_spec, run, eager_ids, compiled
+):
+    """``build_model`` for a model with an untraceable layer in it."""
+    count = len(inner.layers)
+    plan: list[tuple[str, Any]] = []
+    start = 0
+    for index in [*eager_ids, count]:
+        if index > start:
+            plan.append(("traced", (start, index, None)))
+        if index < count:
+            plan.append(("eager", index))
+        start = index + 1
+
+    def make_segment(begin: int, end: int):
+        def segment(hidden, states, seg_weights, sparse_masks=None):
+            produced = []
+            for offset in range(end - begin):
+                mask = None if sparse_masks is None else sparse_masks[offset]
+                hidden, out = run(
+                    begin + offset, hidden, states[offset], seg_weights[offset], mask
+                )
+                produced.append(out)
+            return hidden, produced
+
+        return mx.compile(segment) if compiled else segment
+
+    plan = [
+        (kind, (payload[0], payload[1], make_segment(payload[0], payload[1])))
+        if kind == "traced"
+        else (kind, payload)
+        for kind, payload in plan
+    ]
+
+    def tail(hidden, weights):
+        mixed = mixer(hidden, weights["mixer"])
+        return call_linear(head_spec, weights["head"], mixed), mixed
+
+    return CompiledModel(
+        step=None,
+        weights=weights,
+        layers=[layer for layer in layers if layer is not None],
+        hc_count=int(inner.args.hc_count),
+        model=model,
+        plan=plan,
+        eager_caches={},
+        tail=mx.compile(tail) if compiled else tail,
+        sparse_budget=_sparse_budget(inner),
     )
 
 

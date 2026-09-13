@@ -29,8 +29,13 @@ with stock is the correctness question, and a run that tracks one and not the
 other tells you which layer moved.
 
 ``--kernels reference`` runs Titan with every fast path off, which is the
-control arm of any kernel A/B. It sets ``TITAN_REFERENCE_ONLY`` before the
-adapter is imported, because the adapter reads that once at import time.
+control arm of any kernel A/B. It publishes a reference-only registry before
+the model is loaded, which is the same mechanism ``kernels.reference_only`` in
+the config file uses, so the arm this bench calls the control is the arm the
+server would run under that setting. It was an environment variable until
+ROUND4; the trouble with that was that the adapter then had two policies, the
+registry's and the environment's, and a bisect with two policies cannot say
+which one produced a number.
 
 The token ids in a reference may be re-encoded from its text rather than
 reported by the server (the record's ``ids_source`` says which). When they are,
@@ -48,7 +53,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -249,7 +253,7 @@ def main() -> None:
         "--kernels",
         choices=("reference", "fast"),
         default="fast",
-        help="reference turns every fast path off (TITAN_REFERENCE_ONLY=1)",
+        help="reference turns every fast path off (kernels.reference_only)",
     )
     parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument("--only", default=None, help="substring filter on prompt id")
@@ -259,9 +263,13 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
-    # Before any titan import: the adapter reads this once, at import time.
+    # Before the checkpoint is loaded, so the adapter's first lookup finds it.
     if args.kernels == "reference":
-        os.environ["TITAN_REFERENCE_ONLY"] = "1"
+        from titan.adapters.mlx import kernels as adapter_kernels
+        from titan.kernels.registry import reference_only
+
+        reference_only()
+        adapter_kernels.reset()
 
     references = [load_reference(resolve_reference(n)) for n in args.reference]
     max_tokens = args.max_tokens or min(r["max_tokens"] for r in references)

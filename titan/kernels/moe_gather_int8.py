@@ -451,6 +451,13 @@ def supports(k: ShapeClass) -> bool:
 
 OP = KernelOp(
     name="moe_gather_int8",
+    default_off=True,
+    default_off_reason=(
+        "ROUND4: -3.7% at 64k against the reference control, at pinned "
+        "drafter depth, and its cold 65k prefill is below the control too, "
+        "so nothing is traded for it. It also holds 11.3 GB of qsum tables "
+        "(VENDORED.md) and quantises activations for 0.65% of output RMS."
+    ),
     aliases=("moe_gather_gate_up",),
     reference_fn=reference,
     fast_fn=metal,

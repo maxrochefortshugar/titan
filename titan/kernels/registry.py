@@ -112,6 +112,18 @@ class KernelOp:
     exactness: str = "unspecified"
     source: str = ""
     aliases: tuple[str, ...] = ()
+    default_off: bool = False
+    """Is this op's fast path off unless a configuration asks for it by name?
+
+    The per-op default, in code, next to the op. An op is ``default_off``
+    because it was *measured* to cost throughput on this machine at the shapes
+    the engine actually calls it with, not because it is wrong: every one of
+    them still passes its exactness test and can be turned back on by naming it
+    in ``kernels.enabled``. ``bench/decode/ROUND4.md`` carries the measurement
+    for each, and an op that is turned off here should carry the reason on its
+    own line.
+    """
+    default_off_reason: str = ""
 
     # -- the Op protocol ---------------------------------------------------
     def reference(self, *args: Any, **kwargs: Any) -> Any:
@@ -186,9 +198,22 @@ class KernelRegistry:
         names = {op.name, *op.aliases}
         if names & set(self.config.disabled):
             return False
-        if self.config.enabled and not (names & set(self.config.enabled)):
+        asked_for = bool(names & set(self.config.enabled))
+        if self.config.enabled and not asked_for:
+            return False
+        # A measured-off op takes its fast path only when a configuration names
+        # it. An empty ``kernels.enabled`` means "every op's default", not
+        # "every op's fast path", which is the distinction ROUND4 needed: the
+        # production configuration names nothing, and the ops that cost
+        # throughput there should be off in it without anyone having to
+        # remember to list them.
+        if op.default_off and not asked_for:
             return False
         return True
+
+    def defaults(self) -> Mapping[str, bool]:
+        """Name -> is this op's fast path on under an empty configuration."""
+        return {name: not self._ops[name].default_off for name in self.names()}
 
     def fast_disabled(self, name: str) -> bool:
         """Is this op's fast path off by *policy* rather than by shape?

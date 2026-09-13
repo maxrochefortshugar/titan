@@ -1,0 +1,19 @@
+```python
+def merge_sorted_lists(list1: list, list2: list) -> list:
+    """
+    Merges two sorted lists into one sorted list.
+    
+    Args:
+        list1: A sorted list of comparable elements.
+        list2: A sorted list of comparable elements.
+    
+    Returns:
+        A new sorted list containing all elements from list1 and list2.
+    """
+    merged = []
+    i, j = 0, 0
+    
+    # Compare elements from both lists and append the smaller one
+    while i < len(list1) and j < len(list2):
+        if list1[i] <= list2[j]:
+            merged.append

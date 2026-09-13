@@ -835,3 +835,93 @@ def test_a_ple_layer_is_refused_rather_than_silently_dropped(model):
             C.build_layer(layer)
     finally:
         del layer["ple"]
+
+
+# ---------------------------------------------------------------------------
+# section 5.2: the layer's own handle on its compiled step
+# ---------------------------------------------------------------------------
+
+
+def test_compile_step_builds_the_layer_and_holds_it(model):
+    layer = model.language_model.model.layers[0]
+    try:
+        built = layer.compile_step()
+        assert built is not None
+        assert built is layer._titan_compiled
+        assert built.kind in (C.LINEAR, C.ATTENTION)
+    finally:
+        layer._titan_compiled = None
+
+
+def test_compile_step_leaves_a_ple_layer_eager(model):
+    """The layer that reads an mmap mid-forward gets ``None``, not an exception.
+
+    ``build_layer`` raises for a PLE layer, which is right for a caller that
+    asked for that layer specifically and wrong for a caller walking every
+    layer in the model: one layer of 48 on the checkpoint has one and it is
+    supposed to stay eager.
+    """
+    layer = model.language_model.model.layers[0]
+    layer["ple"] = object()
+    try:
+        assert layer.compile_step() is None
+        assert layer._titan_compiled is None
+    finally:
+        del layer["ple"]
+        layer._titan_compiled = None
+
+
+def test_the_compiled_decode_layer_path_is_off_by_default():
+    from titan.adapters.mlx.vendor.mlx_vlm.models import forward_paths
+
+    assert forward_paths.enabled("compiled_decode_layer") is False
+
+
+def test_a_built_layer_stays_eager_until_the_caller_holds_a_compiled_state(
+    model, language_model, spec
+):
+    """The switch alone is not enough, and that is the point of the guard.
+
+    The compiled step takes the state in and gives it back, so a caller still
+    holding vendored caches cannot use it. With the path on and an ordinary
+    cache the layer must run eagerly and return a hidden; with a
+    :class:`LayerState` it must return the step's tuple.
+    """
+    from titan.adapters.mlx.vendor.mlx_vlm.models import forward_paths
+
+    layer = model.language_model.model.layers[0]
+    caches = prefill(language_model, 64, spec.vocab_size)
+    width = spec.hidden_size * spec.hc_count
+    hidden = mx.random.normal((1, 1, width)).astype(mx.bfloat16)
+    built = layer.compile_step()
+    try:
+        with forward_paths.overridden(compiled_decode_layer=True):
+            eager = layer(hidden, None, None, caches[0], None)
+        assert isinstance(eager, mx.array)
+
+        state = C.new_state(model).layers[0]
+        with forward_paths.overridden(compiled_decode_layer=True):
+            out = layer(hidden, None, None, state, None)
+        assert isinstance(out, tuple)
+        direct = built.step(hidden, *state.arrays, built.weights)
+        assert len(out) == len(direct)
+        for produced, expected in zip(out, direct):
+            assert identical(produced, expected)
+    finally:
+        layer._titan_compiled = None
+
+
+def test_a_single_graph_is_refused_past_the_indexer_budget(model, spec, language_model):
+    """Past the budget the eager attention selects keys and a single graph does not.
+
+    COMPILED.md section 7 calls a plausible wrong answer here the worst failure
+    mode in the document and says the builder should refuse rather than trust
+    the caller. It refuses at call time, because the budget is a property of
+    the length and the length is not known until a step runs.
+    """
+    compiled_model = C.build_model(model)
+    assert compiled_model.sparse_budget > 0, "the synthetic model has a QSA layer"
+    state = C.new_state(model)
+    state.length = compiled_model.sparse_budget + 1
+    with pytest.raises(ValueError, match="past the QSA indexer budget"):
+        compiled_model(tokens(1, spec.vocab_size), state)

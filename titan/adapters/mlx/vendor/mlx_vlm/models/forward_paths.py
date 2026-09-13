@@ -3,9 +3,18 @@
 Titan addition. The vendored forward has several arms that change how much
 Python work and how many kernel launches a step costs without changing what the
 step computes: the per-layer ``async_eval``, the batched verify linear, the
-batched verify attention, and the compiled sub-blocks. Each one needs to be
-switchable so a bench can pair it against its own baseline in one process and
-so a regression can be bisected without a rebuild.
+batched verify attention, the compiled sub-blocks, and which attention arm a
+QSA layer takes. Each one needs to be switchable so a bench can pair it against
+its own baseline in one process and so a regression can be bisected without a
+rebuild.
+
+There are two kinds of switch here and they are kept apart. A *path* is a
+boolean -- an arm is on or it is off -- and is read with :func:`enabled`. A
+*route* carries a value, because the question it answers is "from which context
+length" rather than "yes or no", and is read with :func:`route`. Both live in
+this file because both answer the same question for a call site, and because
+splitting them by type would have put half the attention switchboard in the
+adapter and half in the vendored tree, which is where they were until ROUND4.
 
 The rules this follows are the registry's, not the environment's. Every path
 has a name, a default, and a docstring line below; nothing here reads
@@ -20,17 +29,21 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 __all__ = [
     "ADDED",
     "DEFAULTS",
     "DESCRIPTIONS",
+    "ROUTES",
+    "ROUTE_DESCRIPTIONS",
     "disable",
     "enable",
     "enabled",
     "overridden",
     "reset",
+    "route",
+    "routes",
     "set_paths",
     "snapshot",
 ]
@@ -42,6 +55,7 @@ DEFAULTS: dict[str, bool] = {
     "batched_verify_attention": True,
     "compiled_gated_residual": True,
     "cached_norm_scale": True,
+    "compiled_decode_layer": False,
 }
 
 #: The paths this workstream added, as opposed to the ones it inherited.
@@ -75,10 +89,55 @@ DESCRIPTIONS: dict[str, str] = {
         "Use the RMSNorm scale folded at load time rather than rebuilding "
         "1 + weight every call."
     ),
+    "compiled_decode_layer": (
+        "Run a decoder layer as one traced graph, state in and state out. "
+        "Needs the caller to hold a compiled DecodeState; see COMPILED.md."
+    ),
+}
+
+#: name -> default, for the switches that carry a value rather than a flag.
+#: Moved here from ``titan/adapters/mlx/kernels.py`` in ROUND4: they are arm
+#: switches for the vendored attention, so they belong with the other arm
+#: switches rather than in the adapter's kernel door.
+ROUTES: dict[str, Any] = {
+    "qsa_sparse_singleton_verify": True,
+    "qsa_batched_sparse": True,
+    "qsa_gather_min_context": 8192,
+    "qsa_gather_min_context_verify": 4096,
+}
+
+ROUTE_DESCRIPTIONS: dict[str, str] = {
+    "qsa_sparse_singleton_verify": (
+        "Route a one-row target-verify forward (the depth-0 speculative cycle, "
+        "and any decode that asks for a hidden state) through the gathered "
+        "sparse decode arm. Off leaves it on the dense masked path, which "
+        "reads the whole cache: 2.8 ms a forward at 64k against 1.4."
+    ),
+    "qsa_batched_sparse": (
+        "Give a BatchQSAKVCache the gathered sparse arm, through the "
+        "``qsa.gathered_batched`` registry op. Off leaves batched decode and "
+        "batched verify on the dense path, where every row reads the whole "
+        "cache and the QSA mask is discarded outright when rows are padded."
+    ),
+    "qsa_gather_min_context": (
+        "Context length from which a one-row forward prefers the gathered arm "
+        "to the dense masked one. The vendored gate is the QSA token budget, "
+        "2048, which is where selection becomes *legal* rather than where it "
+        "becomes cheaper: the gathered arm reads a flat 2,051 rows whatever "
+        "the context, so at 2048 it is reading more than the dense arm and "
+        "paying for selection on top. Clamped up to the budget by the caller."
+    ),
+    "qsa_gather_min_context_verify": (
+        "The same, for a block wider than one row. It is lower because the "
+        "dense arm's cost rises with the width and the gathered arm's barely "
+        "does: measured per QSA layer on the real-shapes synthetic, width 4 "
+        "crosses over near 4096 and width 1 not until 8192."
+    ),
 }
 
 _lock = threading.Lock()
 _state: dict[str, bool] = dict(DEFAULTS)
+_routes: dict[str, Any] = dict(ROUTES)
 
 
 def _check(name: str) -> str:
@@ -89,18 +148,40 @@ def _check(name: str) -> str:
     return name
 
 
+def _check_route(name: str) -> str:
+    if name not in ROUTES:
+        raise KeyError(
+            f"no such route {name!r}; known: {', '.join(sorted(ROUTES))}"
+        )
+    return name
+
+
 def enabled(name: str) -> bool:
     """Is *name* on? The hot-path read, so it stays a dict lookup."""
     return _state[_check(name)]
 
 
-def set_paths(**paths: bool) -> dict[str, bool]:
-    """Set several paths at once. Returns the values they had before."""
+def route(name: str) -> Any:
+    """The current value of a route. The hot-path read, so it stays a lookup."""
+    return _routes[_check_route(name)]
+
+
+def set_paths(**paths: Any) -> dict[str, Any]:
+    """Set several paths or routes at once. Returns the values they had before.
+
+    One setter for both kinds, because a caller pairing arms does not want to
+    know which of them happens to be a flag. A name that is neither raises, so
+    a typo is loud rather than silent.
+    """
     with _lock:
-        previous = {}
+        previous: dict[str, Any] = {}
         for name, value in paths.items():
-            previous[_check(name)] = _state[name]
-            _state[name] = bool(value)
+            if name in ROUTES:
+                previous[name] = _routes[name]
+                _routes[name] = value
+            else:
+                previous[_check(name)] = _state[name]
+                _state[name] = bool(value)
         return previous
 
 
@@ -113,20 +194,27 @@ def disable(name: str) -> None:
 
 
 def reset() -> None:
-    """Back to :data:`DEFAULTS`."""
+    """Back to :data:`DEFAULTS` and :data:`ROUTES`."""
     with _lock:
         _state.clear()
         _state.update(DEFAULTS)
+        _routes.clear()
+        _routes.update(ROUTES)
 
 
 def snapshot() -> dict[str, bool]:
-    """What is on right now. For a bench header or a resolved-config dump."""
+    """Which paths are on right now. For a bench header or a config dump."""
     return dict(_state)
 
 
+def routes() -> dict[str, Any]:
+    """What the routes are set to right now. Same audience as :func:`snapshot`."""
+    return dict(_routes)
+
+
 @contextmanager
-def overridden(**paths: bool) -> Iterator[dict[str, bool]]:
-    """Scope a set of paths to a block, restoring the old values after."""
+def overridden(**paths: Any) -> Iterator[dict[str, bool]]:
+    """Scope a set of paths or routes to a block, restoring the old values."""
     previous = set_paths(**paths)
     try:
         yield snapshot()

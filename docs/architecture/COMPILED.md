@@ -341,9 +341,13 @@ from it; another test hands the result to `ModelState` and truncates.
 
 ## 5. The change in `qwen4_exp`, as a diff
 
-`titan/adapters/mlx/vendor/mlx_vlm/models/qwen4_exp/**` belongs to another
-workstream, so nothing here edits it. Two changes are wanted there, and both
-are small.
+**Applied in ROUND4.** Both hunks are in the tree; what follows is kept as the
+statement of what changed and why, because the reasoning is the part that rots
+if it is only in a commit message. Two differences from the diff as written:
+the compiled-residual branch carries the reasoning as a comment at the call
+site, and `compiled_decode_layer` reads its switch from `forward_paths`, which
+now also holds the four QSA routes that ROUND3 left in
+`titan/adapters/mlx/kernels.py`.
 
 ### 5.1 Make the compiled gated residual the default, MTP or not
 
@@ -498,7 +502,7 @@ the compiled path does not need it -- it rolls back from a snapshot instead.
 
 ---
 
-## 6. The real-model command, which nothing here has run
+## 6. The real-model command, which ROUND4 ran
 
 ```
 python bench/decode/compiled_path.py real \
@@ -519,18 +523,52 @@ subcommand (`--ops` turns it on) and even then it only walks the graph with
 `mx.export_to_dot`, which reads it without evaluating it. Results are written
 under the repo, not /tmp.
 
-Two things to expect from it.
+### What it measured
 
-At 600 tokens the compiled arm should cut host build from 15.8 ms towards 1 ms
-and step time from 18.1 ms towards 4 ms. The synthetic model's 26% is a floor
-set by its trivial GPU work, and the checkpoint has 2.0 ms of GPU against 15.8
-ms of host.
+`bench/decode/ROUND4.md` step 2 has the run and the reasoning. The short
+version, at a 600-token context on the checkpoint, twenty repeats, paired:
 
-At 64k the sparse path is live -- the indexer budget is 2048 -- so the twelve
-sparse layers take `build_layer_split` and the selection stays on the eager
-path. Expect a smaller win there than at 600 and expect the split layers to
-dominate what is left. That is the measurement that says whether compiling the
-indexer cache is worth doing next.
+| | width 1 eager | width 1 compiled | width 4 eager | width 4 compiled |
+|---|---:|---:|---:|---:|
+| build ms | 14.03 | 2.64 (-81%) | 23.05 | 2.88 (-87%) |
+| step ms | 16.29 | 27.91 (+71%) | 26.74 | 33.28 (+24%) |
+| gpu ms | 2.26 | 25.27 | 3.69 | 30.40 |
+
+**The host prediction held and the step prediction did not.** Host build falls
+from 14.03 ms to 2.64, five to eightfold, flat in the width, which is what this
+document said it would do. Step time gets worse at both widths anyway.
+
+Two reasons. The eager forward `async_eval`s after every decoder layer, so the
+GPU is running layer *i* while the host builds layer *i+1*; the host time this
+path removes was already hidden behind the GPU rather than sitting on the
+critical path. And a compiled layer gives up `hc_fused` -- section 1c's own
+qualification, which said the compiled residual is not the fastest thing
+available on checkpoint-shaped inputs, turns out to be the larger of the two
+once a step runs 96 of them. The synthetic model's 26% win in section 3 came
+from a model whose GPU work is trivial; the checkpoint's is not.
+
+So `compiled_decode_layer` is off by default and is not wired into the served
+decode. The experiment that would reopen this is a `build_layer` that calls
+`hc_fused` where the shapes allow it rather than always composing
+`build_gated_residual`.
+
+### Two things ROUND4 had to fix before the command ran at all
+
+**The checkpoint has a PLE layer, and `build_model` refused the whole model.**
+`build_layer` still raises for one, which is right for a caller that asked for
+that layer. `build_model` now builds a *plan* instead: traced runs of layers
+with the untraceable ones eager between them, one extra dispatch per such
+layer. `untraceable_layers(model)` names them. The state contract grew a third
+kind, `EAGER`, a placeholder carrying no arrays; `grow_state`,
+`truncate_state` and `recurrent_arrays` skip it and the layer keeps its own
+vendored cache, because its state is state a trace cannot hold. A model with no
+such layer takes exactly the single-graph path it always did.
+
+**`CompiledModel.__call__` now refuses a length past the indexer budget**,
+which is what section 7 said the builder should do and did not. The refusal is
+at call time because the budget is a property of the length. That is why the
+64k half of this command has no numbers: getting them needs `build_layer_split`
+wired into `build_model`, and given the 600-token result that is not urgent.
 
 ---
 
@@ -553,9 +591,13 @@ sequences. What has not been measured is the memory the cache holds.
 tokens on a limit that counts buffers rather than bytes. The compiled path holds
 *fewer* live buffers than the eager one at steady state -- fixed-capacity KV
 instead of a reallocating one -- but `grow_state` briefly holds both the old and
-the new buffer at every growth point, and at 64k both are large. Run
-`host_overhead.py buffers --tokens 12288` on the compiled path before enabling
-it, as FORWARD.md section 5 requires of any dispatch change.
+the new buffer at every growth point, and at 64k both are large. **Run and
+clear in ROUND4**: `host_overhead.py buffers --tokens 12288 --compiled` reports
+0.00 KB/step of steady-state growth against the eager arm's 0.00, with active
+memory stepping only at the capacity growth points and flat between them, and
+the compiled arm holding 6.8 MB live at 12,288 tokens against the eager arm's
+13.1. The `--compiled` flag is new; it drives the compiled step instead of the
+eager forward.
 
 **Numerics at the sparse seam.** Below the indexer budget the compiled path is
 within one bf16 ULP of eager everywhere it was measured, and agrees on the
@@ -563,8 +605,10 @@ argmax at widths 1 to 6. Above the budget, the dense single graph is *not* the
 same computation -- it attends to keys the eager path drops -- and
 `build_layer_split` is not optional there. A caller that forgets it gets a
 plausible answer that is wrong, which is the worst failure mode in this
-document. The layer builder should probably refuse to build a single graph for a
-sparse-eligible layer rather than trusting the caller; it does not yet.
+document. **Closed in ROUND4**: `CompiledModel.__call__` refuses a length past
+the budget by name, at call time, and
+`tests/model/test_compiled_path.py::test_a_single_graph_is_refused_past_the_indexer_budget`
+pins the refusal.
 
 **The snapshot is the rollback.** The compiled path drops the recurrent
 intermediate capture and rolls back from `ModelState`'s snapshot instead. That

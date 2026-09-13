@@ -105,6 +105,27 @@ accurate but up to 11 ULP from MLX's bf16 reduce where the four stream terms
 cancel, and the merged input projection, whose `hc` injection rows come out 2
 to 4 ULP away at the real K = 10240.
 
+## Per-op defaults
+
+Four of the eleven ops are `default_off`, which means the fast path is taken
+only when a configuration names the op in `kernels.enabled`. That is a measured
+decision rather than a doubt about the kernel: each one still passes its
+exactness test, each carries a `default_off_reason` on its `KernelOp` giving
+the number that turned it off, and `bench/decode/ROUND4.md` step 1 is the
+bisect the numbers came from. They are `moe_gather_int8`, `gdn_chunk_scan`,
+`grouped_rmsnorm_bf16` and `ple_packed_lookup`; the first three cost 4 to 13%
+of 64k decode and the fourth costs about 4% at both contexts.
+
+Two of them, `gdn_chunk_scan` and `grouped_rmsnorm_bf16`, were built for
+prefill and do buy cold prefill: putting them back is +6.2% on a cold 65k
+prefill and -12.2% on 64k decode, which is the better trade below about 2,000
+output tokens. That is the reason they are `default_off` rather than deleted,
+and the reason `kernels.enabled` is the switch rather than a rebuild.
+
+So an empty `kernels.enabled` means "every op's default", not "every op's fast
+path". `kernels.disabled` is unchanged and still forces an op off whatever its
+default.
+
 ## Selection
 
 `build_registry(config)` registers every op and applies the enable/disable

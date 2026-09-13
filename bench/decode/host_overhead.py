@@ -793,6 +793,50 @@ def cmd_cell(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _eager_stepper(harness):
+    """One ordinary decode step, evaluated once."""
+
+    def once() -> None:
+        output = harness.decode_step(1)
+        mx.eval(_step_outputs(output, harness.cache))
+
+    return once
+
+
+def _compiled_stepper(harness):
+    """One compiled decode step, evaluated once, state in and state out.
+
+    COMPILED.md section 7 asks for this arm by name: the compiled path holds
+    *fewer* live buffers than the eager one at steady state, because its KV is
+    fixed capacity rather than reallocating, but ``grow_state`` holds both the
+    old and the new buffer at every growth point and at 64k both are large.
+    The question this answers is whether that shows up as unbounded growth.
+    """
+    from titan.adapters.mlx import compiled as C
+
+    model = C.build_model(harness.model)
+    C.eval_weights(model.weights)
+    # ``buffers`` defaults to no prefill, and an empty vendored cache has no
+    # arrays to bridge from. Starting from a fresh state is also the harder
+    # question here: it crosses every capacity growth point on the way to
+    # 12,288 tokens rather than starting past most of them.
+    state = (
+        C.read_layer_state(harness.cache)
+        if harness.context
+        else C.new_state(harness.model)
+    )
+    mx.eval([array for entry in state.layers for array in entry.arrays])
+    held = {"state": state}
+
+    def once() -> None:
+        tokens = harness.next_tokens(1)
+        logits, _hidden, new_state = model(tokens, held["state"])
+        held["state"] = new_state
+        mx.eval(logits, *[a for e in new_state.layers for a in e.arrays])
+
+    return once
+
+
 def cmd_buffers(args) -> int:
     """Generate past 12k tokens and watch memory, per mlx-lm issue #1332.
 
@@ -804,13 +848,13 @@ def cmd_buffers(args) -> int:
     state.
     """
     harness = make_harness(args)
+    stepper = _compiled_stepper(harness) if args.compiled else _eager_stepper(harness)
     mx.reset_peak_memory()
     samples = []
     start = time.perf_counter()
     previous = mx.get_active_memory()
     for step in range(1, args.tokens + 1):
-        output = harness.decode_step(1)
-        mx.eval(_step_outputs(output, harness.cache))
+        stepper()
         if step % args.every == 0 or step == args.tokens:
             active = mx.get_active_memory()
             samples.append(
@@ -826,6 +870,7 @@ def cmd_buffers(args) -> int:
             previous = active
 
     print(f"target        {args.model or 'synthetic'}")
+    print(f"arm           {'compiled' if args.compiled else 'eager'}")
     print(f"forward paths {forward_paths.snapshot()}")
     print(
         "mlx buffers   MLX_MAX_OPS_PER_BUFFER="
@@ -899,6 +944,11 @@ def build_parser() -> argparse.ArgumentParser:
     common(buffers, context_default=0)
     buffers.add_argument("--tokens", type=int, default=12288)
     buffers.add_argument("--every", type=int, default=512)
+    buffers.add_argument(
+        "--compiled",
+        action="store_true",
+        help="drive the compiled decode step rather than the eager forward",
+    )
     buffers.set_defaults(func=cmd_buffers)
 
     cell = sub.add_parser("_cell", help=argparse.SUPPRESS)

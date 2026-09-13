@@ -1,0 +1,194 @@
+[
+  {
+    "step": 512,
+    "active_mb": 7.258016,
+    "peak_mb": 7.340472,
+    "cache_mb": 4.334732,
+    "growth_kb_per_step": 11.48446875,
+    "elapsed_s": 0.7169851660000859
+  },
+  {
+    "step": 1024,
+    "active_mb": 7.258016,
+    "peak_mb": 7.342508,
+    "cache_mb": 10.630284,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 1.3515800410004886
+  },
+  {
+    "step": 1536,
+    "active_mb": 7.241632,
+    "peak_mb": 7.342508,
+    "cache_mb": 10.679436,
+    "growth_kb_per_step": -0.032,
+    "elapsed_s": 1.978516999999556
+  },
+  {
+    "step": 2048,
+    "active_mb": 7.241632,
+    "peak_mb": 7.342708,
+    "cache_mb": 10.679436,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 2.6026056249993417
+  },
+  {
+    "step": 2560,
+    "active_mb": 7.502868,
+    "peak_mb": 7.772015,
+    "cache_mb": 10.582175,
+    "growth_kb_per_step": 0.5102265625,
+    "elapsed_s": 3.273106665999876
+  },
+  {
+    "step": 3072,
+    "active_mb": 7.502868,
+    "peak_mb": 7.772015,
+    "cache_mb": 10.652442,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 3.947471957999369
+  },
+  {
+    "step": 3584,
+    "active_mb": 7.500948,
+    "peak_mb": 7.772015,
+    "cache_mb": 13.750214,
+    "growth_kb_per_step": -0.00375,
+    "elapsed_s": 4.626337665999017
+  },
+  {
+    "step": 4096,
+    "active_mb": 7.500948,
+    "peak_mb": 7.772015,
+    "cache_mb": 17.191878,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 5.31344933299988
+  },
+  {
+    "step": 4608,
+    "active_mb": 7.500948,
+    "peak_mb": 7.772015,
+    "cache_mb": 17.376894,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 5.997859666000295
+  },
+  {
+    "step": 5120,
+    "active_mb": 7.500948,
+    "peak_mb": 7.772015,
+    "cache_mb": 17.376894,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 6.684024915999544
+  },
+  {
+    "step": 5632,
+    "active_mb": 7.500948,
+    "peak_mb": 7.772317,
+    "cache_mb": 17.475198,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 7.374408040999697
+  },
+  {
+    "step": 6144,
+    "active_mb": 7.498636,
+    "peak_mb": 7.772317,
+    "cache_mb": 17.479558,
+    "growth_kb_per_step": -0.004515625,
+    "elapsed_s": 8.06854199999907
+  },
+  {
+    "step": 6656,
+    "active_mb": 7.500948,
+    "peak_mb": 7.934513,
+    "cache_mb": 17.475198,
+    "growth_kb_per_step": 0.004515625,
+    "elapsed_s": 8.76270574999944
+  },
+  {
+    "step": 7168,
+    "active_mb": 7.500948,
+    "peak_mb": 7.934865,
+    "cache_mb": 17.475198,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 9.458545707999292
+  },
+  {
+    "step": 7680,
+    "active_mb": 7.500948,
+    "peak_mb": 7.934865,
+    "cache_mb": 17.475198,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 10.158630124999036
+  },
+  {
+    "step": 8192,
+    "active_mb": 7.500948,
+    "peak_mb": 7.934865,
+    "cache_mb": 17.475198,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 10.861250374999145
+  },
+  {
+    "step": 8704,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 10.976,
+    "elapsed_s": 11.543533374999242
+  },
+  {
+    "step": 9216,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 12.216276375000234
+  },
+  {
+    "step": 9728,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 12.892043791000106
+  },
+  {
+    "step": 10240,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 13.565996416000417
+  },
+  {
+    "step": 10752,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 14.238808665999386
+  },
+  {
+    "step": 11264,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 14.906610915999408
+  },
+  {
+    "step": 11776,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.487554,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 15.57864008300021
+  },
+  {
+    "step": 12288,
+    "active_mb": 13.12066,
+    "peak_mb": 19.421832,
+    "cache_mb": 24.48755,
+    "growth_kb_per_step": 0.0,
+    "elapsed_s": 16.251576415999807
+  }
+]

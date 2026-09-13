@@ -128,6 +128,11 @@ def supports(k: ShapeClass) -> bool:
 
 OP = KernelOp(
     name="grouped_rmsnorm_bf16",
+    default_off=True,
+    default_off_reason=(
+        "ROUND4: -7.9% on 64k decode for 2.7% of cold prefill, on the same "
+        "prefill-then-decode pattern as gdn_chunk_scan."
+    ),
     aliases=("rms_norm_grouped",),
     reference_fn=reference,
     fast_fn=metal,

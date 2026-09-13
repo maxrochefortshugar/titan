@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 
 from titan.adapters.mlx import kernels as adapter_kernels
+from titan.adapters.mlx.vendor.mlx_vlm.models import forward_paths
 from titan.adapters.mlx.vendor.mlx_vlm.models.qwen4_exp import language as q4
 from titan.adapters.mlx.vendor.mlx_vlm.models.qwen4_exp import qsa_fast
 from titan.adapters.mlx.vendor.mlx_vlm.models.qwen4_exp.config import TextConfig
@@ -219,7 +220,7 @@ def test_the_padded_route_equals_the_per_row_route(attention, lengths, width):
     """
     pads = [max(lengths) - n for n in lengths]
     x = _rows(width, len(lengths))
-    with adapter_kernels.overridden(
+    with forward_paths.overridden(
         qsa_gather_min_context=BUDGET, qsa_gather_min_context_verify=BUDGET
     ):
         joined = _batched(
@@ -282,7 +283,7 @@ def test_the_shipped_arms_are_the_same_distance_apart(attention):
     got = attention(
         x, mask="causal", cache=_warm_cache(12288, seed=100), target_verify=True
     )
-    with adapter_kernels.overridden(
+    with forward_paths.overridden(
         qsa_gather_min_context=10 ** 9, qsa_gather_min_context_verify=10 ** 9
     ):
         want = attention(
@@ -292,7 +293,7 @@ def test_the_shipped_arms_are_the_same_distance_apart(attention):
 
     x = _rows(1, 1)
     got = attention(x, mask="causal", cache=_warm_cache(12288, seed=100))
-    with adapter_kernels.overridden(
+    with forward_paths.overridden(
         qsa_gather_min_context=10 ** 9, qsa_gather_min_context_verify=10 ** 9
     ):
         want = attention(x, mask="causal", cache=_warm_cache(12288, seed=100))
@@ -304,7 +305,7 @@ def test_batched_sparse_can_be_switched_off(attention):
     caches = [_warm_cache(12288, seed=1), _warm_cache(12285, seed=2)]
     joined = _batched(caches, [0, 3])
     x = _rows(1, 2)
-    with adapter_kernels.overridden(qsa_batched_sparse=False):
+    with forward_paths.overridden(qsa_batched_sparse=False):
         with _Counter(q4.Qwen4ExpAttention, "_batched_sparse_qsa") as counter:
             out = attention(x, mask="causal", cache=joined)
     assert counter.calls == 0
@@ -391,7 +392,7 @@ def test_the_one_row_verify_arm_agrees_with_the_dense_one(attention):
     sparse_cache = _warm_cache(12288, seed=9)
     dense_cache = _warm_cache(12288, seed=9)
     got = attention(x, mask="causal", cache=sparse_cache, target_verify=True)
-    with adapter_kernels.overridden(qsa_sparse_singleton_verify=False):
+    with forward_paths.overridden(qsa_sparse_singleton_verify=False):
         with _Counter(q4, "contiguous_causal_gathered_qsa_decode") as counter:
             want = attention(
                 x, mask="causal", cache=dense_cache, target_verify=True
@@ -438,7 +439,7 @@ def test_the_crossover_is_clamped_up_to_the_budget(attention):
     """Setting it below the budget cannot make the arm legal earlier: below the
     budget there are fewer complete blocks than the indexer may select, so
     there is nothing to select."""
-    with adapter_kernels.overridden(
+    with forward_paths.overridden(
         qsa_gather_min_context=0, qsa_gather_min_context_verify=0
     ):
         assert q4._gather_min_context(BUDGET) == BUDGET
@@ -455,7 +456,7 @@ def test_lowering_the_crossover_takes_the_gathered_arm_earlier(attention):
     x = _rows(1, 1, seed=14)
     early = _warm_cache(3000, seed=22)
     late = _warm_cache(3000, seed=22)
-    with adapter_kernels.overridden(qsa_gather_min_context=2048):
+    with forward_paths.overridden(qsa_gather_min_context=2048):
         with _Counter(q4, "contiguous_causal_gathered_qsa_decode") as counter:
             got = attention(x, mask="causal", cache=early)
         assert counter.calls == 1

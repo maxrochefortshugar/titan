@@ -59,7 +59,7 @@ import json
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
@@ -133,6 +133,10 @@ class CompiledArm:
     state: C.DecodeState
     snapshot: dict
     name: str = "compiled"
+    #: layer index -> the eager layer's cache arrays as they stood at the
+    #: prefill length. A layer that stays eager holds vendored state the
+    #: functional rollback cannot reach, so it is restored rather than rewound.
+    eager_baseline: dict = dc_field(default_factory=dict)
 
     def step(self, tokens: mx.array):
         logits, hidden, state = self.model(tokens, self.state)
@@ -150,6 +154,13 @@ class CompiledArm:
         self.state = C.truncate_state(
             self._pending, self._pending.length - width, self.snapshot
         )
+        # A layer that stays eager holds a vendored cache, which the functional
+        # rollback cannot reach: its recurrent slots are not in the snapshot
+        # and an ArraysCache is not trimmable. So it is put back to the state
+        # it had at the prefill length, which is what the rest of the state
+        # comes back to, and the arm steps from the same length every repeat.
+        for index, saved in self.eager_baseline.items():
+            _restore_cache(self.model.eager_caches[index], saved)
 
 
 def make_arms(model, length: int, *, use_kernel: bool = True):
@@ -172,14 +183,72 @@ def make_arms(model, length: int, *, use_kernel: bool = True):
 
     compiled_model = C.build_model(model, use_kernel=use_kernel)
     C.eval_weights(compiled_model.weights)
-    state = C.read_layer_state(cache)
+    # The layers that cannot be traced keep their own vendored caches, and the
+    # two arms must not share one: the compiled arm's eager layer would advance
+    # the cache the eager arm is stepping from. So it gets a copy, prefilled to
+    # the same length.
+    eager_ids = C.untraceable_layers(model)
+    if eager_ids:
+        copies = _clone_caches(language_model, cache)
+        compiled_model.eager_caches = {index: copies[index] for index in eager_ids}
+    state = C.read_layer_state(cache, eager_indices=eager_ids)
     mx.eval([a for entry in state.layers for a in entry.arrays])
     snapshot = state.recurrent_arrays()
 
+    baseline = {
+        index: _snapshot_cache(compiled_model.eager_caches[index])
+        for index in eager_ids
+    }
     return (
         EagerArm(language_model=language_model, cache=cache, length=length),
-        CompiledArm(model=compiled_model, state=state, snapshot=snapshot),
+        CompiledArm(
+            model=compiled_model,
+            state=state,
+            snapshot=snapshot,
+            eager_baseline=baseline,
+        ),
     )
+
+
+def _snapshot_cache(cache) -> dict:
+    """Everything a vendored cache holds, copied. Small: one layer's worth."""
+    saved: dict = {}
+    if getattr(cache, "keys", None) is not None:
+        saved["keys"] = mx.array(cache.keys)
+        saved["values"] = mx.array(cache.values)
+        saved["offset"] = cache.offset
+        if getattr(cache, "index_keys", None) is not None:
+            saved["index_keys"] = mx.array(cache.index_keys)
+            saved["index_position_ids"] = mx.array(cache.index_position_ids)
+    held = getattr(cache, "state", None)
+    if held is not None:
+        saved["state"] = [None if v is None else mx.array(v) for v in held]
+    return saved
+
+
+def _restore_cache(cache, saved: dict) -> None:
+    for name in ("keys", "values", "offset", "index_keys", "index_position_ids"):
+        if name in saved:
+            value = saved[name]
+            setattr(cache, name, mx.array(value) if isinstance(value, mx.array) else value)
+    if "state" in saved:
+        cache.state = [None if v is None else mx.array(v) for v in saved["state"]]
+
+
+def _clone_caches(language_model, caches) -> list:
+    """A deep copy of a cache list, so two arms cannot see each other."""
+    copy = language_model.make_cache()
+    for fresh, held in zip(copy, caches):
+        if getattr(held, "keys", None) is not None:
+            fresh.keys = mx.array(held.keys)
+            fresh.values = mx.array(held.values)
+            fresh.offset = held.offset
+            if getattr(held, "index_keys", None) is not None:
+                fresh.index_keys = mx.array(held.index_keys)
+                fresh.index_position_ids = mx.array(held.index_position_ids)
+        elif getattr(held, "state", None) is not None:
+            fresh.state = [None if v is None else mx.array(v) for v in held.state]
+    return copy
 
 
 def _cache_arrays(caches) -> list:

@@ -89,7 +89,7 @@ maps the adapter's site names to the names `titan.kernels` registers.
 | `moe.gather_qmm_ws` | `moe_gather_ws` | same site, second | yes | bit-identical |
 | `ple.packed_rows_lookup` | `ple_packed_lookup` | `DiskBackedShardedEmbedding.__call__` | yes | bit-exact |
 | `sample.fast_topk` | `topk_radix` | the drafter (not a vendored site) | yes | value multiset identical to `mx.topk` |
-| `qsa.gathered_batched` | `qsa_gathered_attention` | `Qwen4ExpAttention.__call__`, batched decode | **no** | padded route within 1 ULP, loop route exact |
+| `qsa.gathered_batched` | `qsa_gathered_attention` | `Qwen4ExpAttention._batched_sparse_qsa`, batched decode and batched verify | yes | padded route within 1 ULP, loop route exact |
 | `ple.packed_rows_prefetch` | -- | `DiskBackedShardedEmbedding.prefetch` | no | -- |
 | `qsa.indexer_scores`, `qsa.topk_indices`, `qsa.sparse_gqa`, `qsa.decode_sdpa` | -- | `qsa_fast.py` | no | -- |
 
@@ -97,17 +97,51 @@ The unwired rows are deliberate, and each is a different kind of gap.
 
 The four `qsa_fast.py` seams are the narrow ABIs oMLX filled from its own Metal
 extension. Titan has no equivalent yet, so the guards fail closed and those
-paths run the MLX ops -- slower, and identical.
+paths run the MLX ops -- slower, and identical. Two of them,
+`qsa.indexer_scores` and `qsa.topk_indices`, are ROUND3's named next lever: at
+64k the pooled block bank is 16,000 slots of 128 bf16 values a layer, and the
+MLX path casts it to fp32 every step and reads it twice, which oMLX's pair
+does not.
 
-`qsa.gathered_batched` is the one that is worth finishing. The kernel exists,
-but it replaces the whole attention block and wants the pooled index bank in
-phased slot space (`QSAGeometry`, `QSAConfig`), which the vendored attention
-does not build -- round3/qsa-batched built it in its patch. Wiring it means
-adding that bank construction to `Qwen4ExpAttention.__call__` for a
-`BatchQSAKVCache`, and it should not be guessed at: the padded route is only
-within one ULP when every row clears the gather crossover, and a wrong phase
-offset would be silently wrong rather than loud. Until then batched decode
-takes the dense path.
+`ple.packed_rows_prefetch` has no kernel because the reader's prefetch is host
+work by construction: it is a pooled page read against an mmap, and there is
+nothing on the device to accelerate.
+
+`qsa.gathered_batched` **was** the row worth finishing and is now wired, in
+ROUND3. `BatchQSAKVCache.pooled_index_slots` builds the pooled index bank the
+kernel wants, incrementally and in phased slot space: rows are left padded and
+right aligned, so two rows whose padding differs by something that is not a
+multiple of the compression ratio have block grids in different phases and no
+single pooled key serves both. Slot `j` of row `b` pools physical columns
+`ratio*j + phase_b` upwards, selection runs in slot space, and only the final
+gather converts back to physical columns, which is what makes the batched
+output equal the per-row output. `Qwen4ExpAttention._batched_sparse_qsa` is the
+call site, for batched decode and batched verify, behind the
+`qsa_batched_sparse` route in `models/forward_paths.py`; turning that route off,
+or turning the op off with `kernels.disabled`, sends batched rows back to the
+dense masked path. What it still lacks is a throughput number on the
+checkpoint, because reaching it needs two sequences decoding in lockstep and
+`MLXModelBackend.verify` dispatches one forward per sequence (W4.2). Correctness
+is not what is missing: `tests/model/test_qsa_arms.py` holds it bit-for-bit
+against the op's per-row reference through the whole attention module at widths
+1 to 6 and across the 2048 and 8192 crossings.
+
+## Where the arm switches live
+
+Which *arm* of the vendored attention a call takes is a different question from
+which kernel sits behind an op, and it has its own switchboard:
+`vendor/mlx_vlm/models/forward_paths.py`. A *path* there is a boolean
+(`eager_dispatch`, `batched_verify_linear`, `batched_verify_attention`,
+`compiled_gated_residual`, `cached_norm_scale`, `compiled_decode_layer`) read
+with `enabled`; a *route* carries a value (`qsa_sparse_singleton_verify`,
+`qsa_batched_sparse`, `qsa_gather_min_context`,
+`qsa_gather_min_context_verify`) read with `route`. Nothing there reads the
+environment and flipping one is a function call, so a bench can pair both
+settings inside one process.
+
+The four QSA routes lived in `titan/adapters/mlx/kernels.py` between ROUND3 and
+ROUND4 and were moved here, so the attention switchboard is one file rather
+than two.
 
 ## What is deliberately absent
 

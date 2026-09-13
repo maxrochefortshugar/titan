@@ -41,7 +41,6 @@ from .qsa_fast import (
 from . import hc_fused
 from .....kernels import get as _titan_op
 from .....kernels import ple_table as _titan_ple_table
-from .....kernels import route as _titan_route
 from .....kernels import (
     qsa_config as _titan_qsa_config,
     qsa_geometry as _titan_qsa_geometry,
@@ -1226,7 +1225,7 @@ def _gather_min_context(token_budget: int, width: int = 1) -> int:
         if width <= 1
         else "qsa_gather_min_context_verify"
     )
-    return max(int(token_budget), int(_titan_route(route)))
+    return max(int(token_budget), int(forward_paths.route(route)))
 
 
 class Qwen4ExpRMSNorm(nn.Module):
@@ -1579,7 +1578,7 @@ class Qwen4ExpAttention(Qwen3_5Attention):
         # attention projection on this checkpoint is quantised -- so the only
         # difference is which attention arm runs, and those agree to a bf16
         # ULP.
-        if target_verify and not _titan_route("qsa_sparse_singleton_verify"):
+        if target_verify and not forward_paths.route("qsa_sparse_singleton_verify"):
             return False
         if not (
             x.ndim == 3
@@ -1856,7 +1855,7 @@ class Qwen4ExpAttention(Qwen3_5Attention):
         which is deliberate: the singleton arms read ``cache.offset`` as an int
         and a batched cache's offset is a per-row array.
         """
-        if not _titan_route("qsa_batched_sparse"):
+        if not forward_paths.route("qsa_batched_sparse"):
             return False
         if not isinstance(cache, BatchQSAKVCache):
             return False
@@ -2114,13 +2113,19 @@ class Qwen4ExpGatedResidual(nn.Module):
         if (
             compiled_forward is not None
             and forward_paths.enabled("compiled_gated_residual")
-            and not target_verify
             and hyper_input.ndim == 3
-            and hyper_input.shape[:2] == (1, 1)
-            and hyper_input.dtype == mx.bfloat16
-            and not getattr(self, "_titan_mtp_enabled", False)
+            and hyper_input.shape[0] == 1
         ):
-            return compiled_forward(hyper_input)
+            # Titan modification, ROUND4: three gates came off here. See
+            # docs/architecture/COMPILED.md section 5.1. The MTP gate guarded
+            # the *hybrid projection* arm inside ``_forward``, which reads the
+            # same stamp and still refuses; the compiled forward does not take
+            # that arm, so the stamp was refusing the wrong thing. The width
+            # and dtype gates existed because the closure was traced once and a
+            # second shape would retrace, which is what a compile cache is for.
+            # ``target_verify`` is a Python bool, so MLX keys a trace per value
+            # of it as well as per shape: two traces, both wanted.
+            return compiled_forward(hyper_input, target_verify=target_verify)
         return self._forward(hyper_input, target_verify=target_verify)
 
     def _forward(self, hyper_input: mx.array, target_verify: bool = False):
@@ -2310,9 +2315,17 @@ def prepare_rmsnorm_scales(model: nn.Module) -> int:
 def compile_hyper_connections(model: nn.Module, mtp_enabled: bool = False) -> int:
     """Compile each hyper-connection's strict single-token decode path once.
 
-    Titan modification: the compiled and exact-hybrid decode paths are skipped
-    while Lightning MTP target verification is on.  That used to be read from a
-    process global inside the forward; it is now stamped on each module here.
+    Titan modification: the exact-hybrid decode path is skipped while Lightning
+    MTP target verification is on.  That used to be read from a process global
+    inside the forward; it is now stamped on each module here.
+
+    The stamp no longer gates the *compiled* path. It did until ROUND4, along
+    with a width gate and a dtype gate, and none of the three was needed: the
+    compiled closure is ``_forward`` itself, which is bit-identical to the
+    uncompiled one at both values of ``target_verify``, at every width, and in
+    float32 as well as bfloat16. See docs/architecture/COMPILED.md section 5.1.
+    The stamp stays because ``_titan_exact_hybrid_projection`` in ``_forward``
+    still reads it.
     """
     compiled = 0
     for module in _unique_hyper_connections(model):
@@ -3133,6 +3146,25 @@ def _hyper_inject_ops(
     return hyper_input + injection.reshape(*hyper_input.shape)
 
 
+_TITAN_COMPILED_STATE: Any = None
+
+
+def _compiled_state_type():
+    """``titan.adapters.mlx.compiled.LayerState``, imported on first use.
+
+    Lazily rather than at module scope: the compiled path is off by default,
+    and a layer that never takes it should not pull the compiled module (and
+    its Metal sources) in behind it. Resolved once and cached, so the hot-path
+    ``isinstance`` is a global read.
+    """
+    global _TITAN_COMPILED_STATE
+    if _TITAN_COMPILED_STATE is None:
+        from .....compiled import LayerState
+
+        _TITAN_COMPILED_STATE = LayerState
+    return _TITAN_COMPILED_STATE
+
+
 class Qwen4ExpDecoderLayer(nn.Module):
     def __init__(self, config: TextConfig, layer_idx: int):
         super().__init__()
@@ -3152,6 +3184,23 @@ class Qwen4ExpDecoderLayer(nn.Module):
         self.attn_hyper_connection = Qwen4ExpGatedResidual(config)
         self.mlp_hyper_connection = Qwen4ExpGatedResidual(config)
 
+    def compile_step(self, *, use_kernel: bool = True):
+        """Build this layer's compiled step once, after the weights are loaded.
+
+        Titan modification: see docs/architecture/COMPILED.md. The step is a
+        pure function of (hidden, state, weights); the caller owns the state.
+        A layer carrying a PLE sub-layer gets ``None`` and stays eager, because
+        the n-gram embedding reads rows out of an mmap through numpy in the
+        middle of the forward and no trace can hold that.
+        """
+        from .....compiled import build_layer
+
+        if "ple" in self:
+            self._titan_compiled = None
+            return None
+        self._titan_compiled = build_layer(self, use_kernel=use_kernel)
+        return self._titan_compiled
+
     def __call__(
         self,
         hidden_states: mx.array,
@@ -3162,6 +3211,22 @@ class Qwen4ExpDecoderLayer(nn.Module):
         gdn_sink=None,
         target_verify: bool = False,
     ):
+        compiled = getattr(self, "_titan_compiled", None)
+        if (
+            compiled is not None
+            and forward_paths.enabled("compiled_decode_layer")
+            and gdn_sink is None
+            and "ple" not in self
+            and isinstance(cache, _compiled_state_type())
+        ):
+            # The state comes in and goes back out, so this returns a tuple
+            # rather than a hidden: the caller holds a DecodeState. The
+            # ``gdn_sink is None`` condition is load-bearing -- the recurrent
+            # intermediate capture a replay rollback reads is not in the
+            # compiled graph, because the compiled path rolls back from a
+            # snapshot instead.
+            return compiled.step(hidden_states, *cache.arrays, compiled.weights)
+
         if "ple" in self:
             hidden_states = hidden_states + self.ple(
                 hidden_states,
